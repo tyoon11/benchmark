@@ -1,0 +1,21 @@
+# CODE-15% Diagnosis (6-class multi-label)
+task:
+  name: code15_diag
+  num_classes: 6
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/code15/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/code15/v2.0/code15_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/code15/v2.0/code15_labels.csv
+  label_cols:
+    - 1dAVb
+    - RBBB
+    - LBBB
+    - is_SB
+    - is_STach
+    - is_AF
+  target_fs: 400
+  target_length: 4096  # ~10s × 400Hz
+  normalize: true
+  batch_size: 128
+  num_workers: 8

@@ -1,0 +1,20 @@
+# PTB-XL Superclass (5-class multi-label)
+task:
+  name: ptbxl_super
+  num_classes: 5
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptbxl_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/physionet_labels.csv
+  label_cols:
+    - is_NSR      # Normal Sinus Rhythm
+    - is_AF       # Atrial Fibrillation
+    - is_RBBB     # Right Bundle Branch Block
+    - is_LBBB     # Left Bundle Branch Block
+    - is_STach    # Sinus Tachycardia
+  target_fs: 500
+  target_length: 5000  # 10s × 500Hz
+  normalize: true
+  batch_size: 64
+  num_workers: 8
