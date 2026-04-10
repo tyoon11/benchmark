@@ -18,16 +18,27 @@ class H5ECGDataset(Dataset):
     H5 ECG 다운스트림 태스크 Dataset.
 
     각 샘플은 H5 파일의 하나의 세그먼트에서 로드됩니다.
-    - signal: (n_leads, seg_samples) float16 → float32
+    - signal: (n_leads, target_length) float32
     - label:  multi-hot vector (num_classes,)
+
+    리샘플링 로직:
+      데이터셋마다 fs가 다르더라도 (200/250/257/400/500/1000 Hz)
+      모델이 기대하는 고정 입력 (target_fs × target_seconds = target_length)으로 변환합니다.
+
+      예시: ECG-JEPA가 500Hz × 5초 = 2500 샘플을 기대할 때
+        - heedb 500Hz, 5000샘플(10초) → 500Hz로 유지, 앞 2500샘플 crop
+        - code15 400Hz, 4096샘플(10.24초) → 500Hz로 upsample(5120) → 앞 2500 crop
+        - cpsc2021 200Hz, 2000샘플(10초) → 500Hz로 upsample(5000) → 앞 2500 crop
+        - ptb 1000Hz, 10000샘플(10초) → 500Hz로 downsample(5000) → 앞 2500 crop
+        - stpetersburg 257Hz → 500Hz로 upsample → crop
 
     Args:
         h5_root:        H5 data/ 폴더의 상위 디렉토리
         table_csv:      ecg_table.csv (filepath, pid, rid, fs 등)
         label_csv:      {dataset}_labels.csv (filepath + binary 라벨 컬럼)
         label_cols:     사용할 라벨 컬럼 목록 (None이면 label_csv의 모든 non-key 컬럼)
-        target_fs:      목표 샘플링 주파수 (리샘플링, None이면 원본 유지)
-        target_length:  목표 시계열 길이 (샘플 수, None이면 원본 유지)
+        target_fs:      모델이 기대하는 샘플링 주파수 (None이면 리샘플링 안 함)
+        target_length:  모델이 기대하는 시계열 길이 (샘플 수, None이면 조정 안 함)
         seg_idx:        사용할 세그먼트 인덱스 (None이면 seg0만, 'all'이면 모든 세그먼트)
         normalize:      True면 per-lead z-score (dataset mean/std)
         fold_col:       fold 컬럼명
@@ -124,11 +135,12 @@ class H5ECGDataset(Dataset):
             sig = f[f"ECG/segments/{seg_i}/signal"][()].astype(np.float32)
             # sig: (n_leads, samples)
 
-        # 리샘플링
+        # ── 리샘플링 + 길이 조정 ──
+        # 1단계: fs가 다르면 target_fs로 리샘플링 (upsample/downsample)
         if self.target_fs and self.target_fs != fs:
             sig = self._resample(sig, fs, self.target_fs)
 
-        # 길이 조정 (패딩 또는 자르기)
+        # 2단계: target_length에 맞춰 crop 또는 pad
         if self.target_length:
             sig = self._adjust_length(sig, self.target_length)
 
@@ -157,15 +169,30 @@ class H5ECGDataset(Dataset):
 
     @staticmethod
     def _resample(sig, orig_fs, target_fs):
-        """scipy 기반 리샘플링"""
+        """
+        scipy 기반 리샘플링 (upsample/downsample).
+
+        예시:
+          200Hz → 500Hz: upsample ×2.5
+          400Hz → 500Hz: upsample ×1.25
+          1000Hz → 500Hz: downsample ×0.5
+          257Hz → 500Hz: upsample ×1.95
+        """
         from scipy.signal import resample
         n_leads, orig_len = sig.shape
-        target_len = int(orig_len * target_fs / orig_fs)
+        target_len = int(round(orig_len * target_fs / orig_fs))
+        if target_len == orig_len:
+            return sig
         return resample(sig, target_len, axis=1).astype(np.float32)
 
     @staticmethod
     def _adjust_length(sig, target_length):
-        """패딩 또는 자르기"""
+        """
+        고정 길이로 crop 또는 zero-pad.
+
+        - 길면: 앞에서 target_length만큼 crop
+        - 짧으면: 뒤에 zero-pad
+        """
         n_leads, cur_len = sig.shape
         if cur_len >= target_length:
             return sig[:, :target_length]

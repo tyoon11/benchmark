@@ -1,0 +1,22 @@
+# CODE-15% Diagnosis — ECG-JEPA용
+# CODE-15 원본: 400Hz, 4096 samples → 500Hz로 upsample(5120) → 앞 2500 crop
+task:
+  name: code15_diag
+  num_classes: 6
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/code15/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/code15/v2.0/code15_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/code15/v2.0/code15_labels.csv
+  label_cols:
+    - 1dAVb
+    - RBBB
+    - LBBB
+    - is_SB
+    - is_STach
+    - is_AF
+  target_fs: 500       # 400→500 upsample
+  target_length: 2500  # 500Hz × 5초
+  normalize: false
+  batch_size: 128
+  num_workers: 8

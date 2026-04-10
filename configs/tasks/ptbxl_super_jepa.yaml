@@ -1,0 +1,21 @@
+# PTB-XL Superclass — ECG-JEPA용 (500Hz, 2500 samples = 5초)
+# PTB-XL 원본: 500Hz, 5000 samples → 500Hz 유지, 앞 2500 crop
+task:
+  name: ptbxl_super
+  num_classes: 5
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptbxl_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/physionet_labels.csv
+  label_cols:
+    - is_NSR
+    - is_AF
+    - is_RBBB
+    - is_LBBB
+    - is_STach
+  target_fs: 500       # 모델 기대 fs
+  target_length: 2500  # 모델 기대 입력 길이 (500Hz × 5초)
+  normalize: false
+  batch_size: 64
+  num_workers: 8
