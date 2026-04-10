@@ -1,0 +1,22 @@
+# 기본 학습 설정
+train:
+  epochs: 50
+  lr: 1e-3
+  lr_min: 1e-6
+  weight_decay: 0.01
+  warmup_epochs: 5
+  discriminative_lr_factor: 0.1
+  device: cuda
+
+# 기본 eval_mode
+# linear_probe | attention_probe | finetune_linear | finetune_attention
+eval_mode: linear_probe
+
+# Head 설정
+head:
+  dropout: 0.0
+  num_heads: 8     # attention head용
+  hidden_dim: 256  # mlp head용
+
+# 저장
+save_dir: null  # null → ./results/{task_name}_{eval_mode}_{timestamp}

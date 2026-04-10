@@ -1,0 +1,18 @@
+# CPSC2021 AF Detection (3-class, 2-lead)
+task:
+  name: cpsc2021_af
+  num_classes: 3
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0/ecg_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0/cpsc2021_labels.csv
+  label_cols:
+    - is_nonAF
+    - is_persistentAF
+    - is_paroxysmalAF
+  target_fs: 200
+  target_length: 2000  # 10s × 200Hz
+  normalize: true
+  batch_size: 64
+  num_workers: 8

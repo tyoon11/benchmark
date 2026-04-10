@@ -1,0 +1,15 @@
+# PhysioNet Challenge 2021 All Labels (31-class multi-label)
+task:
+  name: physionet_all
+  num_classes: 31
+
+data:
+  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ecg_table.csv
+  label_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/physionet_labels.csv
+  # label_cols: null → 라벨 CSV의 모든 non-key 컬럼 사용 (31개)
+  target_fs: 500
+  target_length: 5000
+  normalize: true
+  batch_size: 64
+  num_workers: 8
