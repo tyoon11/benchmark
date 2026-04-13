@@ -30,6 +30,7 @@ MODEL_NAMES=(
     merl
     ecgfm_ked
     hubert_ecg
+    ecg_fm
     cpc
 )
 
@@ -40,6 +41,7 @@ MODEL_CLS=(
     "src.encoders.merl.MerlResNetEncoder"
     "src.encoders.ecgfm_ked.EcgFmKEDEncoder"
     "src.encoders.hubert_ecg.HuBERTECGEncoder"
+    "src.encoders.ecg_fm.ECGFMEncoder"
     "src.encoders.cpc.CPCEncoder"
 )
 
@@ -50,6 +52,7 @@ MODEL_CKPT=(
     "/home/irteam/ddn-opendata1/model/ECGFMs/merl/res18_best_encoder.pth"
     "/home/irteam/ddn-opendata1/model/ECGFMs/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
     "/home/irteam/ddn-opendata1/model/ECGFMs/hubert_ecg/hubert_ecg_base.safetensors"
+    "/home/irteam/ddn-opendata1/model/ECGFMs/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
     "/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
 )
 
