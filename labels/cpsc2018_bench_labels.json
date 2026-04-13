@@ -1,0 +1,15 @@
+{
+  "dataset": "cpsc2018",
+  "n_labels": 9,
+  "labels": {
+    "right_bundle_branch_block": "right bundle branch block",
+    "atrial_fibrillation": "atrial fibrillation",
+    "sinus_rhythm": "sinus rhythm",
+    "st_depression": "st depression",
+    "1st_degree_av_block": "1st degree av block",
+    "ventricular_ectopics": "ventricular ectopics",
+    "premature_atrial_contraction": "premature atrial contraction",
+    "left_bundle_branch_block": "left bundle branch block",
+    "st_elevation": "st elevation"
+  }
+}

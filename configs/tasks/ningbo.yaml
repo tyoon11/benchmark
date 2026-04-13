@@ -1,0 +1,13 @@
+# ningbo (66-class multi-label)
+data:
+  batch_size: 64
+  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/ningbo_bench_labels.csv
+  normalize: false
+  num_workers: 8
+  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ningbo_table.csv
+  target_fs: 500
+  target_length: 2500
+task:
+  name: ningbo
+  num_classes: 66

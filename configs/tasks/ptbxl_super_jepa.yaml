@@ -1,21 +1,26 @@
-# PTB-XL Superclass — ECG-JEPA용 (500Hz, 2500 samples = 5초)
-# PTB-XL 원본: 500Hz, 5000 samples → 500Hz 유지, 앞 2500 crop
+# PTB-XL — ECG-JEPA용 (500Hz, 2500 samples = 5초)
+# PTB-XL 내에서 양성 충분한 라벨 10개 선정 (양성 ≥ 500)
 task:
   name: ptbxl_super
-  num_classes: 5
+  num_classes: 10
 
 data:
   h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
   table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptbxl_table.csv
   label_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/physionet_labels.csv
   label_cols:
-    - is_NSR
-    - is_AF
-    - is_RBBB
-    - is_LBBB
-    - is_STach
-  target_fs: 500       # 모델 기대 fs
-  target_length: 2500  # 모델 기대 입력 길이 (500Hz × 5초)
+    - is_NSR       # 18,092 (82.9%) Normal Sinus Rhythm
+    - is_LAD       #  5,146 (23.6%) Left Axis Deviation
+    - is_TAb       #  2,345 (10.7%) T-wave Abnormality
+    - is_LAnFB     #  1,626 ( 7.4%) Left Anterior Fascicular Block
+    - is_AF        #  1,514 ( 6.9%) Atrial Fibrillation
+    - is_IRBBB     #  1,118 ( 5.1%) Incomplete RBBB
+    - is_STach     #    826 ( 3.8%) Sinus Tachycardia
+    - is_IAVB      #    797 ( 3.6%) 1st Degree AV Block
+    - is_SB        #    636 ( 2.9%) Sinus Bradycardia
+    - is_LBBB      #    536 ( 2.5%) Left Bundle Branch Block
+  target_fs: 500
+  target_length: 2500  # 500Hz × 5초
   normalize: false
   batch_size: 64
   num_workers: 8
