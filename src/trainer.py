@@ -35,19 +35,20 @@ class DownstreamTrainer:
         self.model = model.to(self.device)
 
         # 옵티마이저
-        lr = self.cfg.get("lr", 1e-3)
-        disc_lr = self.cfg.get("discriminative_lr_factor", 0.1)
+        lr = float(self.cfg.get("lr", 1e-3))
+        disc_lr = float(self.cfg.get("discriminative_lr_factor", 0.1))
         param_groups = self.model.get_param_groups(lr, disc_lr)
         self.optimizer = torch.optim.AdamW(
             param_groups,
-            weight_decay=self.cfg.get("weight_decay", 0.01),
+            weight_decay=float(self.cfg.get("weight_decay", 0.01)),
         )
 
         # 스케줄러
-        self.epochs = self.cfg.get("epochs", 50)
-        warmup = self.cfg.get("warmup_epochs", 5)
+        self.epochs = int(self.cfg.get("epochs", 50))
+        warmup = int(self.cfg.get("warmup_epochs", 5))
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=self.epochs - warmup, eta_min=self.cfg.get("lr_min", 1e-6)
+            self.optimizer, T_max=max(self.epochs - warmup, 1),
+            eta_min=float(self.cfg.get("lr_min", 1e-6)),
         )
         self.warmup_epochs = warmup
 
@@ -76,7 +77,7 @@ class DownstreamTrainer:
         for epoch in range(self.epochs):
             # Warmup LR
             if epoch < self.warmup_epochs:
-                warmup_lr = self.cfg.get("lr", 1e-3) * (epoch + 1) / self.warmup_epochs
+                warmup_lr = float(self.cfg.get("lr", 1e-3)) * (epoch + 1) / self.warmup_epochs
                 for pg in self.optimizer.param_groups:
                     pg["lr"] = warmup_lr * pg.get("_lr_ratio", 1.0)
                     if "_lr_ratio" not in pg:
