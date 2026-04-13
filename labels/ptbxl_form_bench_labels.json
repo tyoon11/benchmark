@@ -1,0 +1,7 @@
+{
+  "dataset": "ptbxl_form",
+  "n_labels": 1,
+  "labels": [
+    "QWAVE"
+  ]
+}
