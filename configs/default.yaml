@@ -18,5 +18,12 @@ head:
   num_heads: 8     # attention head용
   hidden_dim: 256  # mlp head용
 
+# Fold split (ecg-fm-benchmarking 동일 방식)
+# strat_fold 컬럼이 table CSV에 있으면 자동 사용
+# train = fold < max-1, val = max-1, test = max
+fold:
+  col: strat_fold        # fold 컬럼명
+  auto_split: true       # true면 max_fold 기반 자동 split
+
 # 저장
 save_dir: null  # null → ./results/{task_name}_{eval_mode}_{timestamp}

@@ -26,25 +26,22 @@ class ECGJEPAEncoder(nn.Module):
     Benchmark 인터페이스:
       forward(x) → (sequence_features, pooled_features)
         - x: (B, 12, 2500) — 12리드, 500Hz × 5초
-        - sequence_features: (B, 600, 768) — 12리드 × 50패치
+        - sequence_features: (B, 400, 768) — 8리드 × 50패치
         - pooled_features: (B, 768) — GAP
 
-    Args:
-        embed_dim:      인코더 임베딩 차원 (기본 768)
-        depth:          트랜스포머 깊이 (기본 12)
-        num_heads:      어텐션 헤드 수 (기본 16)
-        c:              리드 수 (기본 12)
-        p:              리드당 패치 수 (기본 50)
-        t:              패치당 타임포인트 (기본 50)
-        checkpoint:     체크포인트 경로 (None이면 로드 안 함)
+    Note: 체크포인트가 8채널(I, II, V1-V6)로 학습되었으므로 c=8 사용.
+          12리드 입력에서 [0, 1, 6, 7, 8, 9, 10, 11] 채널을 선택합니다.
     """
+
+    # 12리드 중 8채널 선택: I, II, V1, V2, V3, V4, V5, V6
+    SELECTED_LEADS = [0, 1, 6, 7, 8, 9, 10, 11]
 
     def __init__(
         self,
         embed_dim: int = 768,
         depth: int = 12,
         num_heads: int = 16,
-        c: int = 12,
+        c: int = 8,
         p: int = 50,
         t: int = 50,
         drop_path_rate: float = 0.0,
@@ -56,6 +53,7 @@ class ECGJEPAEncoder(nn.Module):
 
         self.feature_dim = embed_dim
         self.embed_dim = embed_dim
+        self.c = c
 
         self.encoder = MaskTransformer(
             embed_dim=embed_dim,
@@ -89,31 +87,26 @@ class ECGJEPAEncoder(nn.Module):
 
     def forward(self, x):
         """
-        x: (B, n_leads, seq_len)
+        x: (B, 12, 2500) → 8채널 선택 후 인코딩
         → (sequence_features, pooled_features)
         """
-        # representation: (B, embed_dim) — GAP
-        pooled = self.encoder.representation(x)
+        x = torch.nan_to_num(x)
 
-        # sequence features: patchify → encode (마스킹 없이)
+        # 12리드에서 8채널 선택
+        if x.shape[1] == 12:
+            x = x[:, self.SELECTED_LEADS, :]
+
         B, L, _ = x.shape
-        x_patch = x.reshape(B, -1, self.encoder.t)  # (B, L*p, t)
-        x_embed = self.encoder.W_P(x_patch)          # (B, L*p, embed_dim)
+        x_patch = x.reshape(B, -1, self.encoder.t)   # (B, L*p, t)
+        x_embed = self.encoder.W_P(x_patch)           # (B, L*p, embed_dim)
 
         pos_embed = self.encoder.pos_embed
         attn_mask = self.encoder._cross_attention_mask().to(x.device)
-
-        if L < self.encoder.c:
-            lead_idx = list(range(L))
-            rows = torch.cat([torch.arange(i * self.encoder.p, (i + 1) * self.encoder.p)
-                              for i in lead_idx])
-            pos_embed = pos_embed[rows]
-            attn_mask = attn_mask[rows][:, rows]
 
         pos_embed = pos_embed.unsqueeze(0)
         seq_feat = self.encoder.encoder_blocks(x_embed, pos_embed, attn_mask)
         if self.encoder.norm:
             seq_feat = self.encoder.norm(seq_feat)
-        # seq_feat: (B, L*p, embed_dim)
 
+        pooled = seq_feat.mean(dim=1)  # (B, embed_dim)
         return seq_feat, pooled

@@ -31,6 +31,7 @@ import importlib
 import time
 from pathlib import Path
 
+import pandas as pd
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -294,13 +295,39 @@ def main():
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         logging.info(f"Parameters: {total_params:,} total, {trainable:,} trainable")
 
-    # ── Data ──
+    # ── Data: Fold Split ──
+    fold_cfg = cfg.get("fold", {})
+    fold_col = fold_cfg.get("col", "strat_fold")
+    auto_split = fold_cfg.get("auto_split", True)
+
+    # CLI override가 없고 auto_split이면 table CSV에서 strat_fold 자동 감지
     if args.train_folds:
+        data_cfg["fold_col"] = fold_col
         data_cfg["train_folds"] = [int(x) for x in args.train_folds.split(",")]
     if args.val_folds:
+        data_cfg["fold_col"] = fold_col
         data_cfg["val_folds"] = [int(x) for x in args.val_folds.split(",")]
     if args.test_folds:
+        data_cfg["fold_col"] = fold_col
         data_cfg["test_folds"] = [int(x) for x in args.test_folds.split(",")]
+
+    if auto_split and not args.train_folds and not args.val_folds:
+        # table CSV에 strat_fold가 있으면 자동 split
+        table_path = data_cfg.get("table_csv", "")
+        if os.path.exists(table_path):
+            _df = pd.read_csv(table_path, usecols=lambda c: c == fold_col, nrows=1)
+            if fold_col in _df.columns:
+                _df_full = pd.read_csv(table_path, usecols=[fold_col])
+                max_fold = int(_df_full[fold_col].max())
+                data_cfg["fold_col"] = fold_col
+                data_cfg["train_folds"] = list(range(0, max_fold - 1))
+                data_cfg["val_folds"] = [max_fold - 1]
+                data_cfg["test_folds"] = [max_fold]
+                if is_main_process():
+                    train_n = len(_df_full[_df_full[fold_col] < max_fold - 1])
+                    val_n = len(_df_full[_df_full[fold_col] == max_fold - 1])
+                    test_n = len(_df_full[_df_full[fold_col] == max_fold])
+                    logging.info(f"Auto fold split: train({train_n:,}) / val({val_n:,}) / test({test_n:,})")
 
     train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
     val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
