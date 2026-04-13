@@ -162,26 +162,22 @@ def build_ptbxl_subtask_labels(min_cnt: int = MIN_CNT):
     # 먼저 기본 SNOMED 라벨 생성 (ptbxl 전체)
     df_all, all_cols, all_itos = build_snomed_labels("ptbxl", min_cnt=min_cnt)
 
-    # PTB-XL 서브태스크 정의 (SNOMED 진단명 기반 분류)
-    SUPERCLASS_MAP = {
-        "NORM": ["sinus rhythm", "normal ecg"],
-        "MI":   ["myocardial infarction", "anterior myocardial infarction",
-                 "lateral myocardial infarction", "inferior myocardial infarction",
-                 "anteroseptal myocardial infarction", "anterolateral myocardial infarction"],
-        "STTC": ["st depression", "st elevation", "t wave abnormal", "t wave inversion",
-                 "nonspecific st t changes"],
-        "CD":   ["right bundle branch block", "left bundle branch block",
-                 "1st degree av block", "left anterior fascicular block",
-                 "incomplete right bundle branch block", "left posterior fascicular block",
-                 "complete right bundle branch block"],
-        "HYP":  ["left ventricular hypertrophy", "right ventricular hypertrophy",
-                 "left atrial enlargement", "right atrial enlargement"],
+    # PTB-XL 서브태스크 정의 — SNOMED 약어 코드 기반 직접 매핑
+    # (all_itos가 약어→약어로 매핑되므로 풀네임 매칭 대신 코드 직접 지정)
+    SUPERCLASS_CODE_MAP = {
+        "NORM": ["SR"],
+        "MI":   ["AMI", "PMI", "ISCIL", "ISCIN", "ISCLA", "ISCAN"],
+        "STTC": ["STD_", "STE_", "NST_", "INVT", "TAB_", "STTC"],
+        "CD":   ["CLBBB", "CRBBB", "IRBBB", "ILBBB", "AVB", "2AVB", "3AVB",
+                 "LAFB/LPFB", "LPFB", "IVCD", "LPR", "WPW"],
+        "HYP":  ["VCLVH", "RVH", "SEHYP", "LAO/LAE", "RAO/RAE", "HVOLT"],
     }
 
-    RHYTHM_KEYWORDS = ["sinus", "rhythm", "tachycardia", "bradycardia",
-                       "fibrillation", "flutter", "atrial", "junctional"]
-    FORM_KEYWORDS = ["wave", "st ", "qrs", "qt ", "axis", "voltage",
-                     "hypertrophy", "enlargement"]
+    RHYTHM_CODES = ["SR", "AFIB", "AFLT", "STACH", "SBRAD", "SARRH", "SVARR",
+                    "SVTAC", "PSVT", "PAC", "PVC", "PACE"]
+    FORM_CODES = ["STD_", "STE_", "NST_", "INVT", "TAB_", "STTC", "QWAVE",
+                  "VCLVH", "RVH", "SEHYP", "LAO/LAE", "RAO/RAE", "HVOLT",
+                  "LVOLT", "LAD", "RAD", "LNGQT"]
 
     # 서브태스크별 라벨 생성
     tasks = {}
@@ -189,36 +185,27 @@ def build_ptbxl_subtask_labels(min_cnt: int = MIN_CNT):
     # 1. all — 전체 SNOMED 라벨
     tasks["ptbxl_all"] = (df_all.copy(), all_cols)
 
-    # 2. super — 5 superclass
-    super_cols = list(SUPERCLASS_MAP.keys())
+    # 2. super — 5 superclass (약어 코드 직접 매칭)
+    super_cols = list(SUPERCLASS_CODE_MAP.keys())
     df_super = df_all[["filepath"]].copy()
-    for sclass, keywords in SUPERCLASS_MAP.items():
-        # all_itos에서 키워드가 포함된 컬럼 찾기
-        matching = []
-        for col in all_cols:
-            diag_name = all_itos.get(col, col).lower()
-            for kw in keywords:
-                if kw in diag_name:
-                    matching.append(col)
-                    break
+    for sclass, codes in SUPERCLASS_CODE_MAP.items():
+        matching = [c for c in codes if c in all_cols]
         df_super[sclass] = df_all[matching].any(axis=1) if matching else False
+    # NORM 보정: SR이 있되 MI/STTC/CD/HYP 어느 것도 없는 경우만 Normal
+    pathology_cols = []
+    for s in ["MI", "STTC", "CD", "HYP"]:
+        pathology_cols.extend([c for c in SUPERCLASS_CODE_MAP[s] if c in all_cols])
+    has_pathology = df_all[pathology_cols].any(axis=1) if pathology_cols else False
+    df_super["NORM"] = df_super["NORM"] & ~has_pathology
     tasks["ptbxl_super"] = (df_super, super_cols)
 
     # 3. rhythm — 리듬 관련 라벨만
-    rhythm_cols = []
-    for col in all_cols:
-        diag_name = all_itos.get(col, col).lower()
-        if any(kw in diag_name for kw in RHYTHM_KEYWORDS):
-            rhythm_cols.append(col)
+    rhythm_cols = [c for c in RHYTHM_CODES if c in all_cols]
     if rhythm_cols:
         tasks["ptbxl_rhythm"] = (df_all[["filepath"] + rhythm_cols].copy(), rhythm_cols)
 
     # 4. form — 형태 관련 라벨만
-    form_cols = []
-    for col in all_cols:
-        diag_name = all_itos.get(col, col).lower()
-        if any(kw in diag_name for kw in FORM_KEYWORDS):
-            form_cols.append(col)
+    form_cols = [c for c in FORM_CODES if c in all_cols]
     if form_cols:
         tasks["ptbxl_form"] = (df_all[["filepath"] + form_cols].copy(), form_cols)
 
