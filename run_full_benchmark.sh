@@ -2,23 +2,26 @@
 # =============================================================
 # 전체 모델 × 전체 태스크 벤치마크
 #
+# 모델별로 GPU 1장씩 할당, 병렬 실행.
+# 8 모델 → 7 GPU (마지막 모델은 GPU 0 재사용, 순차 대기)
+#
 # 사용법:
 #   bash run_full_benchmark.sh              # linear_probe만
 #   bash run_full_benchmark.sh all          # 4가지 모드 전부
 #
-# 로그: results/benchmark.log 하나에 통합
-#   tail -f results/benchmark.log
+# 모니터링:
+#   tail -f results/{timestamp}/benchmark.log
 # =============================================================
 
 EVAL_MODE=${1:-linear_probe}
-GPUS="0,1,2,3,4,5,6"
-N_GPUS=7
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
-mkdir -p results
 
-# LOG는 위에서 설정됨
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+RESULT_DIR="results/$TIMESTAMP"
+LOG="$RESULT_DIR/benchmark.log"
+mkdir -p "$RESULT_DIR"
 
 # ─────────────────────────────────────────────────────────────
 # 모델
@@ -47,6 +50,9 @@ MODEL_CKPT=(
     "/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
 )
 
+GPU_IDS=(0 1 2 3 4 5 6)
+N_GPUS=${#GPU_IDS[@]}
+
 # ─────────────────────────────────────────────────────────────
 # 태스크
 # ─────────────────────────────────────────────────────────────
@@ -65,63 +71,79 @@ else
     MODES=($EVAL_MODE)
 fi
 
-TOTAL=$((${#MODEL_NAMES[@]} * ${#TASKS[@]} * ${#MODES[@]}))
-DONE=0
-TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
-RESULT_DIR="results/$TIMESTAMP"
-LOG="$RESULT_DIR/benchmark.log"
-mkdir -p "$RESULT_DIR"
-
 # ─────────────────────────────────────────────────────────────
-# 실행 (모든 출력을 $LOG 하나에 통합)
+# 모델 1개의 전체 태스크를 single GPU에서 순차 실행하는 함수
 # ─────────────────────────────────────────────────────────────
-{
-echo "======================================================================"
-echo " Full Benchmark: ${#MODEL_NAMES[@]} models × ${#TASKS[@]} tasks × ${#MODES[@]} modes = $TOTAL runs"
-echo " GPUs: $GPUS ($N_GPUS)  |  Modes: ${MODES[*]}"
-echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "======================================================================"
+run_model() {
+    local gpu=$1
+    local model_name=$2
+    local encoder_cls=$3
+    local encoder_ckpt=$4
 
-for mode in "${MODES[@]}"; do
-    epochs=$EPOCHS
-    lr_arg=""
-    if [[ "$mode" == finetune_* ]]; then
-        epochs=$FINETUNE_EPOCHS
-        lr_arg="--lr $FINETUNE_LR"
-    fi
-
-    for i in "${!MODEL_NAMES[@]}"; do
-        model_name="${MODEL_NAMES[$i]}"
-        encoder_cls="${MODEL_CLS[$i]}"
-        encoder_ckpt="${MODEL_CKPT[$i]}"
-
-        echo ""
-        echo "══════════════════════════════════════════════════════════════════"
-        echo " $model_name / $mode"
-        echo "══════════════════════════════════════════════════════════════════"
+    for mode in "${MODES[@]}"; do
+        local epochs=$EPOCHS
+        local lr_arg=""
+        if [[ "$mode" == finetune_* ]]; then
+            epochs=$FINETUNE_EPOCHS
+            lr_arg="--lr $FINETUNE_LR"
+        fi
 
         for task in "${TASKS[@]}"; do
-            DONE=$((DONE + 1))
+            local save_dir="$RESULT_DIR/${model_name}_${task}_${mode}"
+
             echo ""
             echo "────────────────────────────────────────────────────────────"
-            echo " [$DONE/$TOTAL] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
+            echo " [GPU $gpu] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
             echo "────────────────────────────────────────────────────────────"
 
-            PORT=$((29500 + RANDOM % 1000))
-            SAVE_DIR="$RESULT_DIR/${model_name}_${task}_${mode}"
-            CUDA_VISIBLE_DEVICES=$GPUS torchrun --nproc_per_node=$N_GPUS \
-                --master_port=$PORT run.py \
+            CUDA_VISIBLE_DEVICES=$gpu python run.py \
                 --task "$task" --eval_mode "$mode" \
                 --encoder_cls "$encoder_cls" \
                 --encoder_ckpt "$encoder_ckpt" \
                 --epochs $epochs $lr_arg \
-                --save_dir "$SAVE_DIR" \
-                2>&1 || {
-                echo "  [FAIL] $model_name / $task / $mode"
-            }
-            sleep 3
+                --save_dir "$save_dir" \
+                2>&1
+
+            echo ""
         done
     done
+
+    echo "══════ [GPU $gpu] $model_name 완료 ($(date '+%H:%M:%S')) ══════"
+}
+
+# ─────────────────────────────────────────────────────────────
+# 메인: 모델별 병렬 실행
+# ─────────────────────────────────────────────────────────────
+{
+echo "======================================================================"
+echo " Full Benchmark: ${#MODEL_NAMES[@]} models × ${#TASKS[@]} tasks × ${#MODES[@]} modes"
+echo " GPUs: ${GPU_IDS[*]} (single GPU per model, parallel)"
+echo " Modes: ${MODES[*]}"
+echo " Results: $RESULT_DIR"
+echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "======================================================================"
+
+PIDS=()
+
+for i in "${!MODEL_NAMES[@]}"; do
+    gpu_idx=$((i % N_GPUS))
+    gpu=${GPU_IDS[$gpu_idx]}
+
+    echo "Starting ${MODEL_NAMES[$i]} on GPU $gpu"
+
+    run_model "$gpu" "${MODEL_NAMES[$i]}" "${MODEL_CLS[$i]}" "${MODEL_CKPT[$i]}" &
+    PIDS+=($!)
+
+    # GPU 수보다 모델이 많으면, GPU가 다 차면 하나 끝날 때까지 대기
+    if [ ${#PIDS[@]} -ge $N_GPUS ]; then
+        wait "${PIDS[0]}"
+        PIDS=("${PIDS[@]:1}")
+    fi
+done
+
+# 나머지 대기
+for pid in "${PIDS[@]}"; do
+    wait "$pid"
 done
 
 # ─────────────────────────────────────────────────────────────
@@ -145,9 +167,14 @@ for mode in "${MODES[@]}"; do
     for task in "${TASKS[@]}"; do
         printf "%-20s" "$task"
         for model_name in "${MODEL_NAMES[@]}"; do
-            # 로그에서 해당 구간의 Best/Test AUROC 추출
-            auroc=$(grep -A9999 "\[$model_name / $task / $mode\]" "$LOG" 2>/dev/null | grep -m1 "Test AUROC" | grep -oP '0\.\d+' | head -1)
-            [ -z "$auroc" ] && auroc=$(grep -A9999 "\[$model_name / $task / $mode\]" "$LOG" 2>/dev/null | grep -m1 "Best val AUROC" | grep -oP '0\.\d+' | head -1)
+            metrics_file="$RESULT_DIR/${model_name}_${task}_${mode}/test_metrics.txt"
+            val_file="$RESULT_DIR/${model_name}_${task}_${mode}/val_metrics.txt"
+            auroc=""
+            if [ -f "$metrics_file" ]; then
+                auroc=$(grep "auroc_macro" "$metrics_file" | grep -oP '[\d.]+' | head -1)
+            elif [ -f "$val_file" ]; then
+                auroc=$(grep "auroc_macro" "$val_file" | grep -oP '[\d.]+' | head -1)
+            fi
             printf "  %-14s" "${auroc:-—}"
         done
         echo ""
@@ -156,8 +183,11 @@ done
 
 echo ""
 echo "완료! $(date '+%Y-%m-%d %H:%M:%S')"
+echo "결과: $RESULT_DIR"
 
 } > "$LOG" 2>&1
 
-echo "벤치마크 시작. 로그: $RESULT_DIR/benchmark.log"
-echo "모니터링: tail -f $RESULT_DIR/benchmark.log"
+echo "벤치마크 시작!"
+echo "  결과: $RESULT_DIR"
+echo "  로그: $LOG"
+echo "  모니터링: tail -f $LOG"
