@@ -134,16 +134,22 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
 
 
 def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
+    """
+    Encoder를 로드합니다.
+    checkpoint는 adapter의 __init__(checkpoint=...) 으로 전달합니다.
+    adapter가 자체 _load_checkpoint을 가지면 그걸 사용합니다.
+    """
     module_path, cls_name = encoder_cls.rsplit(".", 1)
     module = importlib.import_module(module_path)
     cls = getattr(module, cls_name)
+
+    # checkpoint를 adapter 생성자에 전달
+    if encoder_ckpt:
+        kwargs["checkpoint"] = encoder_ckpt
     encoder = cls(**kwargs)
 
-    if encoder_ckpt:
-        state = torch.load(encoder_ckpt, map_location="cpu", weights_only=True)
-        encoder.load_state_dict(state, strict=False)
-        if is_main_process():
-            logging.info(f"Loaded encoder from {encoder_ckpt}")
+    if is_main_process() and encoder_ckpt:
+        logging.info(f"Loaded encoder from {encoder_ckpt}")
 
     feature_dim = getattr(encoder, "feature_dim", None)
     if feature_dim is None:
