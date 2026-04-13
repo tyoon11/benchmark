@@ -256,7 +256,7 @@ def main():
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     save_dir = args.save_dir or str(
-        SCRIPT_DIR / "results" / f"{args.task}_{eval_mode}_{timestamp}"
+        SCRIPT_DIR / "results" / timestamp / f"{args.task}_{eval_mode}"
     )
 
     if is_main_process():
