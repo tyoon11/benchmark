@@ -104,3 +104,12 @@ class MerlViTEncoder(nn.Module):
         pooled = self.model.norm(pooled)
 
         return seq, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.model.named_parameters():
+            if name.startswith(("conv1", "bn1", "layer1", "layer2")):
+                early.append(param)
+            elif name.startswith(("layer3", "layer4")):
+                late.append(param)
+        return {"early": early, "late": late}

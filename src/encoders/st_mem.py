@@ -96,3 +96,14 @@ class StMemEncoder(nn.Module):
         pooled = enc.norm(pooled)
 
         return seq_feat, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.model.encoder.named_parameters():
+            if any(name.startswith(p) for p in ["pos_embedding", "sep_embedding",
+                   "lead_embeddings", "to_patch_embedding"]) or \
+               any(name.startswith(f"block{i}.") for i in [0, 1, 2]):
+                early.append(param)
+            else:
+                late.append(param)
+        return {"early": early, "late": late}

@@ -78,3 +78,13 @@ class ECGFounderEncoder(nn.Module):
         pooled = out.mean(dim=-1)             # (B, 1024)
         seq = out.permute(0, 2, 1)            # (B, seq_len, 1024)
         return seq, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.model.named_parameters():
+            if name.startswith(("first_conv", "first_bn")) or \
+               any(name.startswith(f"stage_list.{i}.") for i in [0, 1, 2]):
+                early.append(param)
+            else:
+                late.append(param)
+        return {"early": early, "late": late}
