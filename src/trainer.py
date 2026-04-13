@@ -1,15 +1,15 @@
 """
 Trainer
 ========
-다운스트림 태스크 학습/평가 루프.
+다운스트림 태스크 학습/평가 루프. DDP 지원.
 """
 
 import os
-import time
 import logging
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from pathlib import Path
 from tqdm import tqdm
 from .metrics import evaluate_all
@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 class DownstreamTrainer:
     """
-    다운스트림 태스크 Trainer.
+    다운스트림 태스크 Trainer (Single GPU + DDP 지원).
 
     Args:
-        model:          DownstreamWrapper
+        model:          DownstreamWrapper (또는 DDP-wrapped)
         train_loader:   DataLoader
         val_loader:     DataLoader
         test_loader:    DataLoader (optional)
@@ -31,13 +31,21 @@ class DownstreamTrainer:
 
     def __init__(self, model, train_loader, val_loader, test_loader=None, cfg=None):
         self.cfg = cfg or {}
-        self.device = torch.device(self.cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = model.to(self.device)
+        self.use_ddp = self.cfg.get("use_ddp", False)
+        self.rank = self.cfg.get("rank", 0)
+        self.world_size = self.cfg.get("world_size", 1)
+        self.is_main = (self.rank == 0)
 
-        # 옵티마이저
+        self.device = torch.device(self.cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+        self.model = model  # 이미 device에 올라가 있음
+
+        # DDP wrapper에서 원본 모듈 접근
+        self.model_unwrapped = model.module if hasattr(model, "module") else model
+
+        # 옵티마이저 (원본 모듈의 param_groups 사용)
         lr = float(self.cfg.get("lr", 1e-3))
         disc_lr = float(self.cfg.get("discriminative_lr_factor", 0.1))
-        param_groups = self.model.get_param_groups(lr, disc_lr)
+        param_groups = self.model_unwrapped.get_param_groups(lr, disc_lr)
         self.optimizer = torch.optim.AdamW(
             param_groups,
             weight_decay=float(self.cfg.get("weight_decay", 0.01)),
@@ -51,6 +59,7 @@ class DownstreamTrainer:
             eta_min=float(self.cfg.get("lr_min", 1e-6)),
         )
         self.warmup_epochs = warmup
+        self.lr = lr
 
         # Loss
         self.criterion = nn.BCEWithLogitsLoss()
@@ -59,9 +68,10 @@ class DownstreamTrainer:
         self.val_loader = val_loader
         self.test_loader = test_loader
 
-        # 저장
+        # 저장 (rank 0만)
         self.save_dir = Path(self.cfg.get("save_dir", "./results"))
-        os.makedirs(self.save_dir, exist_ok=True)
+        if self.is_main:
+            os.makedirs(self.save_dir, exist_ok=True)
         self.best_metric = -float("inf")
         self.best_epoch = -1
 
@@ -69,19 +79,25 @@ class DownstreamTrainer:
 
     def train(self):
         """전체 학습 루프"""
-        logger.info(f"Training for {self.epochs} epochs on {self.device}")
-        logger.info(f"  eval_mode: {self.model.eval_mode}")
-        logger.info(f"  train: {len(self.train_loader.dataset):,} | "
-                     f"val: {len(self.val_loader.dataset):,}")
+        if self.is_main:
+            logger.info(f"Training for {self.epochs} epochs on {self.device}")
+            logger.info(f"  eval_mode: {self.model_unwrapped.eval_mode}")
+            logger.info(f"  world_size: {self.world_size}")
+            logger.info(f"  train: {len(self.train_loader.dataset):,} | "
+                         f"val: {len(self.val_loader.dataset):,}")
 
         for epoch in range(self.epochs):
+            # DDP: epoch별 sampler 시드 설정
+            if self.use_ddp and hasattr(self.train_loader.sampler, "set_epoch"):
+                self.train_loader.sampler.set_epoch(epoch)
+
             # Warmup LR
             if epoch < self.warmup_epochs:
-                warmup_lr = float(self.cfg.get("lr", 1e-3)) * (epoch + 1) / self.warmup_epochs
+                warmup_lr = self.lr * (epoch + 1) / self.warmup_epochs
                 for pg in self.optimizer.param_groups:
-                    pg["lr"] = warmup_lr * pg.get("_lr_ratio", 1.0)
                     if "_lr_ratio" not in pg:
-                        pg["_lr_ratio"] = pg["lr"] / warmup_lr
+                        pg["_lr_ratio"] = pg["lr"] / self.lr if self.lr > 0 else 1.0
+                    pg["lr"] = warmup_lr * pg["_lr_ratio"]
 
             train_loss = self._train_epoch(epoch)
             val_metrics = self._eval_epoch(self.val_loader, "val")
@@ -89,25 +105,27 @@ class DownstreamTrainer:
             if epoch >= self.warmup_epochs:
                 self.scheduler.step()
 
-            # Logging
-            auroc = val_metrics.get("auroc_macro", 0)
-            lr_now = self.optimizer.param_groups[0]["lr"]
-            logger.info(
-                f"Epoch {epoch+1}/{self.epochs} | "
-                f"loss={train_loss:.4f} | val_auroc={auroc:.4f} | lr={lr_now:.2e}"
-            )
+            # Logging (rank 0만)
+            if self.is_main:
+                auroc = val_metrics.get("auroc_macro", 0)
+                lr_now = self.optimizer.param_groups[0]["lr"]
+                logger.info(
+                    f"Epoch {epoch+1}/{self.epochs} | "
+                    f"loss={train_loss:.4f} | val_auroc={auroc:.4f} | lr={lr_now:.2e}"
+                )
 
-            # Best model 저장
-            if auroc > self.best_metric:
-                self.best_metric = auroc
-                self.best_epoch = epoch + 1
-                torch.save(self.model.state_dict(), self.save_dir / "best.pt")
+                if auroc > self.best_metric:
+                    self.best_metric = auroc
+                    self.best_epoch = epoch + 1
+                    torch.save(self.model_unwrapped.state_dict(), self.save_dir / "best.pt")
 
-        logger.info(f"Best val AUROC: {self.best_metric:.4f} at epoch {self.best_epoch}")
+        if self.is_main:
+            logger.info(f"Best val AUROC: {self.best_metric:.4f} at epoch {self.best_epoch}")
 
         # Test
-        if self.test_loader:
-            self.model.load_state_dict(torch.load(self.save_dir / "best.pt", weights_only=True))
+        if self.test_loader and self.is_main:
+            self.model_unwrapped.load_state_dict(
+                torch.load(self.save_dir / "best.pt", weights_only=True))
             test_metrics = self._eval_epoch(self.test_loader, "test")
             logger.info(f"Test AUROC: {test_metrics.get('auroc_macro', 0):.4f}")
             return test_metrics
@@ -120,9 +138,11 @@ class DownstreamTrainer:
         total_loss = 0
         n_batches = 0
 
-        for batch in tqdm(self.train_loader, desc=f"Train {epoch+1}", leave=False):
-            signal = batch["signal"].to(self.device)   # (B, C, T)
-            label = batch["label"].to(self.device)     # (B, num_classes)
+        pbar = tqdm(self.train_loader, desc=f"Train {epoch+1}",
+                     leave=False, disable=not self.is_main)
+        for batch in pbar:
+            signal = batch["signal"].to(self.device)
+            label = batch["label"].to(self.device)
 
             logits = self.model(signal)
             loss = self.criterion(logits, label)
@@ -135,16 +155,25 @@ class DownstreamTrainer:
             total_loss += loss.item()
             n_batches += 1
 
-        return total_loss / max(n_batches, 1)
+        # DDP: loss를 all-reduce로 평균
+        avg_loss = total_loss / max(n_batches, 1)
+        if self.use_ddp:
+            loss_tensor = torch.tensor(avg_loss, device=self.device)
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
+            avg_loss = loss_tensor.item()
+
+        return avg_loss
 
     @torch.no_grad()
     def _eval_epoch(self, loader, prefix="val"):
-        """평가"""
+        """평가 (rank 0에서만 전체 데이터로 평가)"""
         self.model.eval()
         all_preds = []
         all_targets = []
 
-        for batch in tqdm(loader, desc=f"Eval {prefix}", leave=False):
+        pbar = tqdm(loader, desc=f"Eval {prefix}",
+                     leave=False, disable=not self.is_main)
+        for batch in pbar:
             signal = batch["signal"].to(self.device)
             label = batch["label"]
 
@@ -157,12 +186,57 @@ class DownstreamTrainer:
         all_preds = np.concatenate(all_preds, axis=0)
         all_targets = np.concatenate(all_targets, axis=0)
 
-        metrics = evaluate_all(all_targets, all_preds, self.label_names)
+        # DDP: 모든 rank의 예측을 gather (rank 0에서 메트릭 계산)
+        if self.use_ddp:
+            all_preds, all_targets = self._gather_predictions(all_preds, all_targets)
 
-        # 결과 저장
-        result_path = self.save_dir / f"{prefix}_metrics.txt"
-        with open(result_path, "w") as f:
-            for k, v in sorted(metrics.items()):
-                f.write(f"{k}: {v}\n")
+        metrics = {}
+        if self.is_main:
+            metrics = evaluate_all(all_targets, all_preds, self.label_names)
+            result_path = self.save_dir / f"{prefix}_metrics.txt"
+            with open(result_path, "w") as f:
+                for k, v in sorted(metrics.items()):
+                    f.write(f"{k}: {v}\n")
+
+        # DDP: 메트릭을 broadcast (다른 rank에서도 best_metric 비교용)
+        if self.use_ddp:
+            auroc = torch.tensor(metrics.get("auroc_macro", 0.0), device=self.device)
+            dist.broadcast(auroc, src=0)
+            if not self.is_main:
+                metrics = {"auroc_macro": auroc.item()}
 
         return metrics
+
+    def _gather_predictions(self, preds, targets):
+        """모든 rank의 예측을 rank 0으로 gather"""
+        preds_t = torch.from_numpy(preds).to(self.device)
+        targets_t = torch.from_numpy(targets).to(self.device)
+
+        # 각 rank의 데이터 크기가 다를 수 있으므로 크기 먼저 수집
+        local_size = torch.tensor(preds_t.shape[0], device=self.device)
+        all_sizes = [torch.zeros_like(local_size) for _ in range(self.world_size)]
+        dist.all_gather(all_sizes, local_size)
+
+        max_size = max(s.item() for s in all_sizes)
+
+        # 패딩해서 같은 크기로 맞추기
+        if preds_t.shape[0] < max_size:
+            pad_size = max_size - preds_t.shape[0]
+            preds_t = torch.cat([preds_t, torch.zeros(pad_size, *preds_t.shape[1:], device=self.device)])
+            targets_t = torch.cat([targets_t, torch.zeros(pad_size, *targets_t.shape[1:], device=self.device)])
+
+        gathered_preds = [torch.zeros_like(preds_t) for _ in range(self.world_size)]
+        gathered_targets = [torch.zeros_like(targets_t) for _ in range(self.world_size)]
+        dist.all_gather(gathered_preds, preds_t)
+        dist.all_gather(gathered_targets, targets_t)
+
+        if self.is_main:
+            # 패딩 제거
+            all_p = []
+            all_t = []
+            for i, size in enumerate(all_sizes):
+                all_p.append(gathered_preds[i][:size.item()])
+                all_t.append(gathered_targets[i][:size.item()])
+            return torch.cat(all_p).cpu().numpy(), torch.cat(all_t).cpu().numpy()
+
+        return preds, targets
