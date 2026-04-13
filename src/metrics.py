@@ -14,6 +14,7 @@ from sklearn.metrics import (
 def compute_auroc(targets, preds, average="macro"):
     """
     Multi-label AUROC.
+    양성/음성이 모두 존재하는 클래스만으로 계산합니다.
 
     Args:
         targets: (N, C) binary
@@ -21,17 +22,33 @@ def compute_auroc(targets, preds, average="macro"):
         average: 'macro', 'micro', 'weighted', None(=per-class)
     """
     try:
+        n_classes = targets.shape[1]
+        per_class = []
+        for i in range(n_classes):
+            pos = targets[:, i].sum()
+            if 0 < pos < len(targets):
+                per_class.append(roc_auc_score(targets[:, i], preds[:, i]))
+            else:
+                per_class.append(float("nan"))
+
         if average is None:
-            # Per-class AUROC
-            n_classes = targets.shape[1]
-            aucs = []
-            for i in range(n_classes):
-                if targets[:, i].sum() > 0 and targets[:, i].sum() < len(targets):
-                    aucs.append(roc_auc_score(targets[:, i], preds[:, i]))
-                else:
-                    aucs.append(float("nan"))
-            return np.array(aucs)
-        return roc_auc_score(targets, preds, average=average)
+            return np.array(per_class)
+
+        valid = [v for v in per_class if not np.isnan(v)]
+        if not valid:
+            return float("nan")
+
+        if average == "macro":
+            return float(np.mean(valid))
+        elif average == "micro":
+            valid_idx = [i for i in range(n_classes)
+                         if 0 < targets[:, i].sum() < len(targets)]
+            if not valid_idx:
+                return float("nan")
+            return roc_auc_score(
+                targets[:, valid_idx].ravel(), preds[:, valid_idx].ravel()
+            )
+        return float(np.mean(valid))
     except ValueError:
         return float("nan")
 
