@@ -18,7 +18,7 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 mkdir -p results
 
-LOG="results/benchmark.log"
+# LOG는 위에서 설정됨
 
 # ─────────────────────────────────────────────────────────────
 # 모델
@@ -67,6 +67,10 @@ fi
 
 TOTAL=$((${#MODEL_NAMES[@]} * ${#TASKS[@]} * ${#MODES[@]}))
 DONE=0
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+RESULT_DIR="results/$TIMESTAMP"
+LOG="$RESULT_DIR/benchmark.log"
+mkdir -p "$RESULT_DIR"
 
 # ─────────────────────────────────────────────────────────────
 # 실행 (모든 출력을 $LOG 하나에 통합)
@@ -103,14 +107,19 @@ for mode in "${MODES[@]}"; do
             echo " [$DONE/$TOTAL] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
             echo "────────────────────────────────────────────────────────────"
 
-            CUDA_VISIBLE_DEVICES=$GPUS torchrun --nproc_per_node=$N_GPUS run.py \
+            PORT=$((29500 + RANDOM % 1000))
+            SAVE_DIR="$RESULT_DIR/${model_name}_${task}_${mode}"
+            CUDA_VISIBLE_DEVICES=$GPUS torchrun --nproc_per_node=$N_GPUS \
+                --master_port=$PORT run.py \
                 --task "$task" --eval_mode "$mode" \
                 --encoder_cls "$encoder_cls" \
                 --encoder_ckpt "$encoder_ckpt" \
                 --epochs $epochs $lr_arg \
+                --save_dir "$SAVE_DIR" \
                 2>&1 || {
                 echo "  [FAIL] $model_name / $task / $mode"
             }
+            sleep 3
         done
     done
 done
@@ -150,5 +159,5 @@ echo "완료! $(date '+%Y-%m-%d %H:%M:%S')"
 
 } > "$LOG" 2>&1
 
-echo "벤치마크 시작. 로그: $LOG"
-echo "모니터링: tail -f $LOG"
+echo "벤치마크 시작. 로그: $RESULT_DIR/benchmark.log"
+echo "모니터링: tail -f $RESULT_DIR/benchmark.log"
