@@ -91,3 +91,12 @@ class EcgFmKEDEncoder(nn.Module):
         pooled = torch.mean(seq, dim=1)
 
         return seq, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.model.named_parameters():
+            if name.startswith(("0.", "1.", "2.")):
+                early.append(param)
+            elif name.startswith(("4.", "5.", "6.", "7.")):
+                late.append(param)
+        return {"early": early, "late": late}

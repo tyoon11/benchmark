@@ -143,21 +143,46 @@ class DownstreamWrapper(nn.Module):
 
     def get_param_groups(self, lr: float, discriminative_lr_factor: float = 0.1):
         """
-        Discriminative LR parameter groups.
+        계층별 discriminative LR parameter groups.
 
-        Returns:
-          - Frozen: [head_params at lr]
-          - Finetune: [head at lr, encoder at lr * factor]
+        Encoder가 get_layer_groups()를 구현하면 3단계 LR 적용:
+          - Head:                lr
+          - Predictor/Top:       lr × factor
+          - Encoder/Early:       lr × factor²
+
+        미구현 시 2단계:
+          - Head:    lr
+          - Encoder: lr × factor
         """
         head_params = list(self.head.parameters())
+        f = discriminative_lr_factor
 
         if self.is_frozen:
             return [{"params": head_params, "lr": lr}]
 
+        # encoder가 get_layer_groups()를 구현하면 사용
+        if hasattr(self.encoder, "get_layer_groups"):
+            groups = self.encoder.get_layer_groups()
+            # groups: {"early": [...], "late": [...]} or list of param lists
+            if isinstance(groups, dict):
+                early = groups.get("early", [])
+                late = groups.get("late", [])
+                return [
+                    {"params": head_params,  "lr": lr},
+                    {"params": late,         "lr": lr * f},
+                    {"params": early,        "lr": lr * f * f},
+                ]
+            elif isinstance(groups, list) and len(groups) >= 2:
+                result = [{"params": head_params, "lr": lr}]
+                for i, g in enumerate(groups):
+                    result.append({"params": g, "lr": lr * (f ** (i + 1))})
+                return result
+
+        # fallback: 2단계
         encoder_params = list(self.encoder.parameters())
         return [
             {"params": head_params, "lr": lr},
-            {"params": encoder_params, "lr": lr * discriminative_lr_factor},
+            {"params": encoder_params, "lr": lr * f},
         ]
 
     def train(self, mode=True):

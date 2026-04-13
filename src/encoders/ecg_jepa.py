@@ -110,3 +110,13 @@ class ECGJEPAEncoder(nn.Module):
 
         pooled = seq_feat.mean(dim=1)  # (B, embed_dim)
         return seq_feat, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.encoder.named_parameters():
+            if name in ["pos_embed", "W_P.weight", "W_P.bias"] or \
+               any(name.startswith(f"encoder_blocks.blocks.{i}.") for i in range(3)):
+                early.append(param)
+            else:
+                late.append(param)
+        return {"early": early, "late": late}

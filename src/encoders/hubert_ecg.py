@@ -68,3 +68,21 @@ class HuBERTECGEncoder(nn.Module):
         pooled = seq.mean(dim=1)              # (B, 768)
 
         return seq, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.named_parameters():
+            if "feature_extractor" in name or "feature_projection" in name:
+                early.append(param)
+            elif "encoder.layers" in name:
+                try:
+                    layer_num = int(name.split("encoder.layers.")[1].split(".")[0])
+                    if layer_num < 6:
+                        early.append(param)
+                    else:
+                        late.append(param)
+                except (IndexError, ValueError):
+                    late.append(param)
+            elif "encoder" in name:
+                early.append(param)
+        return {"early": early, "late": late}

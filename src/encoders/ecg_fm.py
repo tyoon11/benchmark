@@ -221,3 +221,14 @@ class ECGFMEncoder(nn.Module):
         seq_feat = self.model(x)             # (B, T', 768)
         pooled = seq_feat.mean(dim=1)        # (B, 768)
         return seq_feat, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.model.named_parameters():
+            if any(name.startswith(p) for p in ["feature_extractor", "layer_norm",
+                   "post_extract_proj", "conv_pos"]) or \
+               any(name.startswith(f"encoder.layers.{i}.") for i in range(6)):
+                early.append(param)
+            else:
+                late.append(param)
+        return {"early": early, "late": late}

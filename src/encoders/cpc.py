@@ -155,3 +155,12 @@ class CPCEncoder(nn.Module):
 
         pooled = seq.mean(dim=1)  # (B, 512)
         return seq, pooled
+
+    def get_layer_groups(self):
+        early, late = [], []
+        for name, param in self.named_parameters():
+            if "encoder" in name:
+                early.append(param)
+            else:
+                late.append(param)
+        return {"early": early, "late": late}
