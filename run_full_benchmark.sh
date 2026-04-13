@@ -3,12 +3,12 @@
 # 전체 모델 × 전체 태스크 벤치마크
 #
 # 사용법:
-#   bash run_full_benchmark.sh              # 전체 (linear_probe, 7 GPU)
-#   bash run_full_benchmark.sh linear_probe # 특정 모드만
+#   bash run_full_benchmark.sh              # linear_probe만
 #   bash run_full_benchmark.sh all          # 4가지 모드 전부
+#
+# 로그: results/benchmark.log 하나에 통합
+#   tail -f results/benchmark.log
 # =============================================================
-
-set -e
 
 EVAL_MODE=${1:-linear_probe}
 GPUS="0,1,2,3,4,5,6"
@@ -18,21 +18,12 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 mkdir -p results
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+LOG="results/benchmark.log"
 
 # ─────────────────────────────────────────────────────────────
-# 모델 정의
+# 모델
 # ─────────────────────────────────────────────────────────────
-MODEL_NAMES=(
-    ecg_founder
-    ecg_jepa
-    st_mem
-    merl
-    ecgfm_ked
-    hubert_ecg
-    ecg_fm
-    cpc
-)
+MODEL_NAMES=(ecg_founder ecg_jepa st_mem merl ecgfm_ked hubert_ecg ecg_fm cpc)
 
 MODEL_CLS=(
     "src.encoders.ecg_founder.ECGFounderEncoder"
@@ -57,22 +48,9 @@ MODEL_CKPT=(
 )
 
 # ─────────────────────────────────────────────────────────────
-# 태스크 정의
+# 태스크
 # ─────────────────────────────────────────────────────────────
-TASKS=(
-    ptb
-    ningbo
-    cpsc2018
-    cpsc_extra
-    georgia
-    chapman
-    code15
-    ptbxl_all
-    ptbxl_super
-    ptbxl_diag
-    ptbxl_sub
-    zzu_pecg
-)
+TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub zzu_pecg)
 
 # ─────────────────────────────────────────────────────────────
 # 설정
@@ -87,17 +65,18 @@ else
     MODES=($EVAL_MODE)
 fi
 
-# ─────────────────────────────────────────────────────────────
-# 실행
-# ─────────────────────────────────────────────────────────────
-log "======================================"
-log "Full Benchmark: ${#MODEL_NAMES[@]} models × ${#TASKS[@]} tasks × ${#MODES[@]} modes"
-log "  GPUs: $GPUS ($N_GPUS)"
-log "  Modes: ${MODES[*]}"
-log "======================================"
-
 TOTAL=$((${#MODEL_NAMES[@]} * ${#TASKS[@]} * ${#MODES[@]}))
 DONE=0
+
+# ─────────────────────────────────────────────────────────────
+# 실행 (모든 출력을 $LOG 하나에 통합)
+# ─────────────────────────────────────────────────────────────
+{
+echo "======================================================================"
+echo " Full Benchmark: ${#MODEL_NAMES[@]} models × ${#TASKS[@]} tasks × ${#MODES[@]} modes = $TOTAL runs"
+echo " GPUs: $GPUS ($N_GPUS)  |  Modes: ${MODES[*]}"
+echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "======================================================================"
 
 for mode in "${MODES[@]}"; do
     epochs=$EPOCHS
@@ -112,29 +91,26 @@ for mode in "${MODES[@]}"; do
         encoder_cls="${MODEL_CLS[$i]}"
         encoder_ckpt="${MODEL_CKPT[$i]}"
 
-        log ""
-        log "══════ $model_name / $mode ══════"
+        echo ""
+        echo "══════════════════════════════════════════════════════════════════"
+        echo " $model_name / $mode"
+        echo "══════════════════════════════════════════════════════════════════"
 
         for task in "${TASKS[@]}"; do
             DONE=$((DONE + 1))
-            log_file="results/${model_name}_${task}_${mode}.log"
-            log "[$DONE/$TOTAL] $model_name / $task / $mode"
+            echo ""
+            echo "────────────────────────────────────────────────────────────"
+            echo " [$DONE/$TOTAL] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
+            echo "────────────────────────────────────────────────────────────"
 
-            # Multi-GPU로 실행
             CUDA_VISIBLE_DEVICES=$GPUS torchrun --nproc_per_node=$N_GPUS run.py \
                 --task "$task" --eval_mode "$mode" \
                 --encoder_cls "$encoder_cls" \
                 --encoder_ckpt "$encoder_ckpt" \
                 --epochs $epochs $lr_arg \
-                > "$log_file" 2>&1 || {
-                log "  [FAIL] $model_name / $task / $mode — see $log_file"
-                continue
+                2>&1 || {
+                echo "  [FAIL] $model_name / $task / $mode"
             }
-
-            # 결과 요약
-            auroc=$(grep "Best val AUROC" "$log_file" 2>/dev/null | grep -oP '0\.\d+' | head -1)
-            test_auroc=$(grep "Test AUROC" "$log_file" 2>/dev/null | grep -oP '0\.\d+' | head -1)
-            log "  val_auroc=${auroc:-N/A} test_auroc=${test_auroc:-N/A}"
         done
     done
 done
@@ -142,32 +118,37 @@ done
 # ─────────────────────────────────────────────────────────────
 # 최종 결과 테이블
 # ─────────────────────────────────────────────────────────────
-log ""
-log "======================================"
-log "최종 결과 (Test AUROC)"
-log "======================================"
+echo ""
+echo "======================================================================"
+echo " RESULTS SUMMARY ($(date '+%Y-%m-%d %H:%M:%S'))"
+echo "======================================================================"
 
 for mode in "${MODES[@]}"; do
-    log ""
-    log "── $mode ──"
+    echo ""
+    echo "── $mode ──"
     printf "%-20s" "Task"
     for model_name in "${MODEL_NAMES[@]}"; do
         printf "  %-14s" "$model_name"
     done
     echo ""
-    printf "%s\n" "$(printf '─%.0s' {1..120})"
+    printf "%s\n" "$(printf '─%.0s' {1..140})"
 
     for task in "${TASKS[@]}"; do
         printf "%-20s" "$task"
         for model_name in "${MODEL_NAMES[@]}"; do
-            log_file="results/${model_name}_${task}_${mode}.log"
-            auroc=$(grep "Test AUROC" "$log_file" 2>/dev/null | grep -oP '0\.\d+' | head -1)
-            [ -z "$auroc" ] && auroc=$(grep "Best val AUROC" "$log_file" 2>/dev/null | grep -oP '0\.\d+' | head -1)
+            # 로그에서 해당 구간의 Best/Test AUROC 추출
+            auroc=$(grep -A9999 "\[$model_name / $task / $mode\]" "$LOG" 2>/dev/null | grep -m1 "Test AUROC" | grep -oP '0\.\d+' | head -1)
+            [ -z "$auroc" ] && auroc=$(grep -A9999 "\[$model_name / $task / $mode\]" "$LOG" 2>/dev/null | grep -m1 "Best val AUROC" | grep -oP '0\.\d+' | head -1)
             printf "  %-14s" "${auroc:-—}"
         done
         echo ""
     done
 done
 
-log ""
-log "완료! 로그: results/{model}_{task}_{mode}.log"
+echo ""
+echo "완료! $(date '+%Y-%m-%d %H:%M:%S')"
+
+} > "$LOG" 2>&1
+
+echo "벤치마크 시작. 로그: $LOG"
+echo "모니터링: tail -f $LOG"
