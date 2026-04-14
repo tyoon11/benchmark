@@ -95,7 +95,7 @@ def build_fold_label_stratify(table_csv, label_csv, n_folds=10):
     data, classes, label_cols = get_label_lists(table, labels)
 
     ratios = [1.0 / n_folds] * n_folds
-    stratified_ids = stratify(data, classes, ratios, random_seed=42)
+    stratified_ids = stratify(data, classes, ratios, random_seed=0)
 
     table["strat_fold"] = -1
     for fold_idx, indices in enumerate(stratified_ids):
@@ -203,7 +203,7 @@ def build_fold_patient_stratify(table_csv, label_csv, n_folds=10):
     classes = list(range(len(label_cols)))
     ratios = [1.0 / n_folds] * n_folds
     stratified_ids = stratify(patient_labels, classes, ratios,
-                              samples_per_group=patient_counts, random_seed=42)
+                              samples_per_group=patient_counts, random_seed=0)
 
     # 환자 ID → fold 매핑
     patient_fold = {}
