@@ -1,0 +1,18 @@
+{
+  "dataset": "ptbxl_rhythm",
+  "n_labels": 12,
+  "labels": {
+    "AFIB": "AFIB",
+    "AFLT": "AFLT",
+    "BIGU": "BIGU",
+    "PACE": "PACE",
+    "PSVT": "PSVT",
+    "SARRH": "SARRH",
+    "SBRAD": "SBRAD",
+    "SR": "SR",
+    "STACH": "STACH",
+    "SVARR": "SVARR",
+    "SVTAC": "SVTAC",
+    "TRIGU": "TRIGU"
+  }
+}

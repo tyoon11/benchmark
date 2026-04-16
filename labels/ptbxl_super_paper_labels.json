@@ -1,0 +1,11 @@
+{
+  "dataset": "ptbxl_super",
+  "n_labels": 5,
+  "labels": {
+    "CD": "CD",
+    "HYP": "HYP",
+    "MI": "MI",
+    "NORM": "NORM",
+    "STTC": "STTC"
+  }
+}

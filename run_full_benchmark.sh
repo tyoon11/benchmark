@@ -6,19 +6,28 @@
 # 8 모델 → 7 GPU (마지막 모델은 GPU 0 재사용, 순차 대기)
 #
 # 사용법:
-#   bash run_full_benchmark.sh              # linear_probe만
+#   bash run_full_benchmark.sh              # linear_probe (새 timestamp)
 #   bash run_full_benchmark.sh all          # 4가지 모드 전부
+#   bash run_full_benchmark.sh all 20260413_183153   # 기존 timestamp에 이어서 실행
+#                                                     (이미 완료된 실험은 skip)
 #
 # 모니터링:
 #   tail -f results/{timestamp}/benchmark.log
 # =============================================================
 
 EVAL_MODE=${1:-linear_probe}
+RESUME_TS=${2:-}    # 두 번째 인자: 기존 timestamp로 resume
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 
-TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+if [ -n "$RESUME_TS" ]; then
+    TIMESTAMP="$RESUME_TS"
+    echo "Resume mode: 기존 폴더 사용 → results/$TIMESTAMP"
+else
+    TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+fi
+
 RESULT_DIR="results/$TIMESTAMP"
 LOG="$RESULT_DIR/benchmark.log"
 mkdir -p "$RESULT_DIR"
@@ -50,7 +59,12 @@ MODEL_CKPT=(
     "/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
 )
 
-GPU_IDS=(0 1 2 3 4 5 6)
+# GPU 환경변수로 override 가능: GPU_IDS_OVERRIDE="2 3 4 5 6" bash run_full_benchmark.sh ...
+if [ -n "$GPU_IDS_OVERRIDE" ]; then
+    GPU_IDS=($GPU_IDS_OVERRIDE)
+else
+    GPU_IDS=(0 1 2 3 4 5 6)
+fi
 N_GPUS=${#GPU_IDS[@]}
 
 # ─────────────────────────────────────────────────────────────
@@ -91,6 +105,13 @@ run_model() {
         for task in "${TASKS[@]}"; do
             local save_dir="$RESULT_DIR/${model_name}_${task}_${mode}"
 
+            # 이미 완료된 실험은 skip (test_metrics.txt가 존재하면)
+            if [ -f "$save_dir/test_metrics.txt" ]; then
+                echo ""
+                echo "  [SKIP] $model_name / $task / $mode (이미 완료)"
+                continue
+            fi
+
             echo ""
             echo "────────────────────────────────────────────────────────────"
             echo " [GPU $gpu] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
@@ -123,27 +144,52 @@ echo " Results: $RESULT_DIR"
 echo " Started: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "======================================================================"
 
-PIDS=()
+# PID → GPU 매핑 (associative array)
+declare -A PID2GPU
+# GPU 사용 상태
+declare -A GPU_BUSY
+for g in "${GPU_IDS[@]}"; do GPU_BUSY[$g]=""; done
+
+find_free_gpu() {
+    for g in "${GPU_IDS[@]}"; do
+        if [ -z "${GPU_BUSY[$g]}" ]; then
+            echo "$g"
+            return
+        fi
+    done
+}
+
+release_finished_gpus() {
+    for pid in "${!PID2GPU[@]}"; do
+        if ! kill -0 $pid 2>/dev/null; then
+            local released_gpu="${PID2GPU[$pid]}"
+            GPU_BUSY[$released_gpu]=""
+            unset PID2GPU[$pid]
+            echo "[$(date '+%H:%M:%S')] GPU $released_gpu 해제 (PID $pid 종료)"
+        fi
+    done
+}
 
 for i in "${!MODEL_NAMES[@]}"; do
-    gpu_idx=$((i % N_GPUS))
-    gpu=${GPU_IDS[$gpu_idx]}
+    # 모든 GPU 사용 중이면 하나 끝날 때까지 대기
+    while [ ${#PID2GPU[@]} -ge $N_GPUS ]; do
+        wait -n 2>/dev/null
+        release_finished_gpus
+    done
 
-    echo "Starting ${MODEL_NAMES[$i]} on GPU $gpu"
+    # 비어있는 GPU 찾기
+    gpu=$(find_free_gpu)
+    GPU_BUSY[$gpu]=1
 
+    echo "[$(date '+%H:%M:%S')] Starting ${MODEL_NAMES[$i]} on GPU $gpu"
     run_model "$gpu" "${MODEL_NAMES[$i]}" "${MODEL_CLS[$i]}" "${MODEL_CKPT[$i]}" &
-    PIDS+=($!)
-
-    # GPU 수보다 모델이 많으면, GPU가 다 차면 하나 끝날 때까지 대기
-    if [ ${#PIDS[@]} -ge $N_GPUS ]; then
-        wait "${PIDS[0]}"
-        PIDS=("${PIDS[@]:1}")
-    fi
+    bg_pid=$!
+    PID2GPU[$bg_pid]=$gpu
 done
 
 # 나머지 대기
-for pid in "${PIDS[@]}"; do
-    wait "$pid"
+for pid in "${!PID2GPU[@]}"; do
+    wait "$pid" 2>/dev/null
 done
 
 # ─────────────────────────────────────────────────────────────

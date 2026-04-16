@@ -49,6 +49,11 @@ MODEL_REGISTRY = [
         "checkpoint": str(MODEL_DIR / "ecg_jepa" / "multiblock_epoch100.pth"),
     },
     {
+        "name": "ECG-FM",
+        "encoder_cls": "src.encoders.ecg_fm.ECGFMEncoder",
+        "checkpoint": str(MODEL_DIR / "ecg_fm" / "mimic_iv_ecg_physionet_pretrained.pt"),
+    },
+    {
         "name": "ECG-Founder",
         "encoder_cls": "src.encoders.ecg_founder.ECGFounderEncoder",
         "checkpoint": str(MODEL_DIR / "ecg_founder" / "12_lead_ECGFounder.pth"),
@@ -345,7 +350,7 @@ def main():
         return
 
     # ══════════════════════════════════════════════════════════════════
-    # Phase 2: UMAP + 시각화
+    # Phase 2a: 기존 3-column UMAP (Adult vs Pedi, PTB-XL N/Ab, ZZU N/Ab)
     # ══════════════════════════════════════════════════════════════════
 
     from umap import UMAP
@@ -356,54 +361,47 @@ def main():
     from matplotlib.lines import Line2D
 
     n_models = len(results)
-    fig, axes = plt.subplots(n_models, 3, figsize=(24, 7 * n_models))
+    fig3, axes3 = plt.subplots(n_models, 3, figsize=(24, 7 * n_models))
     if n_models == 1:
-        axes = axes[None, :]
+        axes3 = axes3[None, :]
 
-    silhouette_records = []
+    silhouette_3col = []
+    # UMAP 좌표 캐시 (phase 2b에서 재사용 가능하지만 balanced는 다른 sample이므로 별도)
+    phase_a_coords = {}
 
     for row_idx, (model_name, data) in enumerate(results.items()):
-        logging.info(f"\nUMAP 수행: {model_name} ({len(data['emb_ptbxl'])} + {len(data['emb_zzu'])} samples)...")
-
         emb_ptbxl = data["emb_ptbxl"]
         emb_zzu = data["emb_zzu"]
         ptbxl_labels = data["ptbxl_labels"]
         zzu_labels = data["zzu_labels"]
 
+        logging.info(f"\n[3-col UMAP] {model_name} ({len(emb_ptbxl)} + {len(emb_zzu)} samples)")
         all_emb = np.concatenate([emb_ptbxl, emb_zzu], axis=0)
 
-        reducer = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1,
-                       n_jobs=-1)  # 멀티코어 UMAP
+        reducer = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
         coords = reducer.fit_transform(all_emb)
-
         coords_ptbxl = coords[: len(emb_ptbxl)]
         coords_zzu = coords[len(emb_ptbxl) :]
+        phase_a_coords[model_name] = (coords_ptbxl, coords_zzu)
 
-        # ── UMAP 좌표 저장 ──
         safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
-        np.save(os.path.join(emb_dir, f"{safe_name}_umap_coords.npy"), coords)
+        np.save(os.path.join(emb_dir, f"{safe_name}_umap_coords_all.npy"), coords)
 
-        # ── Silhouette Scores ──
+        # Silhouette
         dataset_labels = [0] * len(emb_ptbxl) + [1] * len(emb_zzu)
-        sil_dataset = silhouette_score(
-            all_emb, dataset_labels, sample_size=min(10000, len(all_emb))
-        )
+        sample_sz = min(10000, len(all_emb))
+        sil_dataset = silhouette_score(all_emb, dataset_labels, sample_size=sample_sz)
 
         ptbxl_binary = [0 if s == "Normal" else 1 for s in ptbxl_labels]
-        sil_ptbxl = (
-            silhouette_score(emb_ptbxl, ptbxl_binary, sample_size=min(10000, len(emb_ptbxl)))
-            if len(set(ptbxl_binary)) > 1
-            else float("nan")
-        )
-
+        sil_ptbxl = (silhouette_score(emb_ptbxl, ptbxl_binary,
+                                      sample_size=min(10000, len(emb_ptbxl)))
+                     if len(set(ptbxl_binary)) > 1 else float("nan"))
         zzu_binary = [0 if s == "Normal" else 1 for s in zzu_labels]
-        sil_zzu = (
-            silhouette_score(emb_zzu, zzu_binary, sample_size=min(10000, len(emb_zzu)))
-            if len(set(zzu_binary)) > 1
-            else float("nan")
-        )
+        sil_zzu = (silhouette_score(emb_zzu, zzu_binary,
+                                    sample_size=min(10000, len(emb_zzu)))
+                   if len(set(zzu_binary)) > 1 else float("nan"))
 
-        silhouette_records.append({
+        silhouette_3col.append({
             "model": model_name,
             "feature_dim": data["feature_dim"],
             "n_ptbxl": len(emb_ptbxl),
@@ -412,69 +410,209 @@ def main():
             "ptbxl_normal_vs_abnormal": sil_ptbxl,
             "zzu_normal_vs_abnormal": sil_zzu,
         })
-
         logging.info(
             f"  Silhouette — Adult/Pedi: {sil_dataset:.4f}, "
             f"PTB-XL N/Ab: {sil_ptbxl:.4f}, ZZU N/Ab: {sil_zzu:.4f}"
         )
 
-        # ── Plot 1: 성인 vs 소아 ──
-        ax = axes[row_idx, 0]
-        ax.scatter(
-            coords_ptbxl[:, 0], coords_ptbxl[:, 1],
-            c="steelblue", s=1, alpha=0.3, rasterized=True,
-            label=f"PTB-XL (Adult, n={len(emb_ptbxl)})",
-        )
-        ax.scatter(
-            coords_zzu[:, 0], coords_zzu[:, 1],
-            c="coral", s=1, alpha=0.3, rasterized=True,
-            label=f"ZZU (Pediatric, n={len(emb_zzu)})",
-        )
+        # Plot 1: Adult vs Pediatric
+        ax = axes3[row_idx, 0]
+        ax.scatter(coords_ptbxl[:, 0], coords_ptbxl[:, 1], c="steelblue", s=1, alpha=0.3,
+                   rasterized=True, label=f"PTB-XL (Adult, n={len(emb_ptbxl)})")
+        ax.scatter(coords_zzu[:, 0], coords_zzu[:, 1], c="coral", s=1, alpha=0.3,
+                   rasterized=True, label=f"ZZU (Pediatric, n={len(emb_zzu)})")
         ax.set_title(f"{model_name}\nAdult vs Pediatric (sil={sil_dataset:.3f})", fontsize=12)
         ax.legend(fontsize=8, markerscale=5, loc="best")
-        ax.set_xlabel("UMAP 1")
-        ax.set_ylabel("UMAP 2")
+        ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
 
-        # ── Plot 2: PTB-XL Normal vs Abnormal ──
-        ax = axes[row_idx, 1]
+        # Plot 2: PTB-XL Normal vs Abnormal
+        ax = axes3[row_idx, 1]
         colors = ["#2ecc71" if s == "Normal" else "#e74c3c" for s in ptbxl_labels]
         ax.scatter(coords_ptbxl[:, 0], coords_ptbxl[:, 1], c=colors, s=1, alpha=0.3, rasterized=True)
         legend_na = [
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ecc71", markersize=8, label="Normal"),
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="#e74c3c", markersize=8, label="Abnormal"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ecc71",
+                   markersize=8, label="Normal"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="#e74c3c",
+                   markersize=8, label="Abnormal"),
         ]
         ax.legend(handles=legend_na, fontsize=8)
         ax.set_title(f"PTB-XL: Normal vs Abnormal (sil={sil_ptbxl:.3f})", fontsize=12)
         ax.set_xlabel("UMAP 1")
 
-        # ── Plot 3: ZZU Normal vs Abnormal ──
-        ax = axes[row_idx, 2]
+        # Plot 3: ZZU Normal vs Abnormal
+        ax = axes3[row_idx, 2]
         colors = ["#2ecc71" if s == "Normal" else "#e74c3c" for s in zzu_labels]
         ax.scatter(coords_zzu[:, 0], coords_zzu[:, 1], c=colors, s=1, alpha=0.3, rasterized=True)
         ax.legend(handles=legend_na, fontsize=8)
         ax.set_title(f"ZZU (Pediatric): Normal vs Abnormal (sil={sil_zzu:.3f})", fontsize=12)
         ax.set_xlabel("UMAP 1")
 
-    # ── 저장 ──
     plt.suptitle(
         "ECG Foundation Models — UMAP Embedding Comparison\n"
         "(PTB-XL: Adult / ZZU-pECG: Pediatric)",
         fontsize=16, y=1.01,
     )
     plt.tight_layout()
+    fig_path_3col = os.path.join(args.output_dir, "umap_all_models.png")
+    plt.savefig(fig_path_3col, dpi=150, bbox_inches="tight")
+    logging.info(f"\n[3-col] 그림 저장: {fig_path_3col}")
+    plt.close(fig3)
 
-    fig_path = os.path.join(args.output_dir, "umap_all_models.png")
-    plt.savefig(fig_path, dpi=150, bbox_inches="tight")
-    logging.info(f"\n그림 저장: {fig_path}")
-    plt.close()
-
-    # ── Silhouette CSV ──
+    # 3-column silhouette CSV
     import csv
-    csv_path = os.path.join(args.output_dir, "umap_silhouette_scores.csv")
-    with open(csv_path, "w", newline="") as f:
+    csv_path_3col = os.path.join(args.output_dir, "umap_silhouette_scores.csv")
+    with open(csv_path_3col, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "model", "feature_dim", "n_ptbxl", "n_zzu",
             "adult_vs_pediatric", "ptbxl_normal_vs_abnormal", "zzu_normal_vs_abnormal",
+        ])
+        writer.writeheader()
+        writer.writerows(silhouette_3col)
+    logging.info(f"[3-col] 실루엣 저장: {csv_path_3col}")
+
+    # ══════════════════════════════════════════════════════════════════
+    # Phase 2b: 4-way balanced UMAP (Adult-N, Adult-A, Pediatric-N, Pediatric-A)
+    # ══════════════════════════════════════════════════════════════════
+
+    # 4-way 색상 + 마커 팔레트 (확실히 구분되는 4색)
+    GROUP_STYLES = {
+        "Adult-Normal":       {"color": "#1f77b4", "marker": "o"},  # 파랑, 원
+        "Adult-Abnormal":     {"color": "#ff7f0e", "marker": "s"},  # 주황, 사각
+        "Pediatric-Normal":   {"color": "#2ca02c", "marker": "^"},  # 초록, 삼각
+        "Pediatric-Abnormal": {"color": "#d62728", "marker": "D"},  # 빨강, 다이아
+    }
+    GROUP_COLORS = {k: v["color"] for k, v in GROUP_STYLES.items()}
+
+    rng = np.random.RandomState(42)
+    fig4, axes4 = plt.subplots(n_models, 1, figsize=(10, 10 * n_models))
+    if n_models == 1:
+        axes4 = [axes4]
+
+    silhouette_records = []
+
+    for row_idx, (model_name, data) in enumerate(results.items()):
+        emb_ptbxl = data["emb_ptbxl"]
+        emb_zzu = data["emb_zzu"]
+        ptbxl_labels = data["ptbxl_labels"]
+        zzu_labels = data["zzu_labels"]
+
+        # ── 4개 그룹 인덱스 ──
+        idx_adult_norm = [i for i, s in enumerate(ptbxl_labels) if s == "Normal"]
+        idx_adult_abn  = [i for i, s in enumerate(ptbxl_labels) if s == "Abnormal"]
+        idx_pedi_norm  = [i for i, s in enumerate(zzu_labels)   if s == "Normal"]
+        idx_pedi_abn   = [i for i, s in enumerate(zzu_labels)   if s == "Abnormal"]
+
+        group_sizes = {
+            "Adult-Normal":       len(idx_adult_norm),
+            "Adult-Abnormal":     len(idx_adult_abn),
+            "Pediatric-Normal":   len(idx_pedi_norm),
+            "Pediatric-Abnormal": len(idx_pedi_abn),
+        }
+        # 최소 그룹 크기로 balance
+        n_per_group = min(group_sizes.values())
+
+        logging.info(
+            f"\nUMAP 수행: {model_name} — group sizes: {group_sizes}, "
+            f"balanced n_per_group={n_per_group}"
+        )
+
+        # 랜덤 서브샘플
+        sel_an = rng.choice(idx_adult_norm, n_per_group, replace=False)
+        sel_aa = rng.choice(idx_adult_abn,  n_per_group, replace=False)
+        sel_pn = rng.choice(idx_pedi_norm,  n_per_group, replace=False)
+        sel_pa = rng.choice(idx_pedi_abn,   n_per_group, replace=False)
+
+        # 임베딩/라벨 조합
+        emb_list = [
+            emb_ptbxl[sel_an],
+            emb_ptbxl[sel_aa],
+            emb_zzu[sel_pn],
+            emb_zzu[sel_pa],
+        ]
+        group_labels_list = (
+            ["Adult-Normal"]       * n_per_group
+            + ["Adult-Abnormal"]   * n_per_group
+            + ["Pediatric-Normal"] * n_per_group
+            + ["Pediatric-Abnormal"] * n_per_group
+        )
+        all_emb = np.concatenate(emb_list, axis=0)
+
+        # ── UMAP ──
+        reducer = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        coords = reducer.fit_transform(all_emb)
+
+        # ── UMAP 좌표 저장 ──
+        safe_name = model_name.replace(" ", "_").replace("(", "").replace(")", "")
+        np.save(os.path.join(emb_dir, f"{safe_name}_umap_coords_balanced.npy"), coords)
+        np.save(os.path.join(emb_dir, f"{safe_name}_umap_labels_balanced.npy"),
+                np.array(group_labels_list))
+
+        # ── Silhouette: 4-way, 성인vs소아(2-way), 정상vs비정상(2-way) ──
+        group_int = np.array([list(GROUP_COLORS.keys()).index(g) for g in group_labels_list])
+        ap_int = np.array([0 if g.startswith("Adult") else 1 for g in group_labels_list])
+        na_int = np.array([0 if g.endswith("Normal") else 1 for g in group_labels_list])
+
+        sample_sz = min(10000, len(all_emb))
+        sil_4way = silhouette_score(all_emb, group_int, sample_size=sample_sz)
+        sil_ap = silhouette_score(all_emb, ap_int, sample_size=sample_sz)
+        sil_na = silhouette_score(all_emb, na_int, sample_size=sample_sz)
+
+        silhouette_records.append({
+            "model": model_name,
+            "feature_dim": data["feature_dim"],
+            "n_per_group": n_per_group,
+            "silhouette_4way": sil_4way,
+            "silhouette_adult_vs_pedi": sil_ap,
+            "silhouette_normal_vs_abnormal": sil_na,
+        })
+        logging.info(
+            f"  Silhouette — 4-way: {sil_4way:.4f}, "
+            f"Adult/Pedi: {sil_ap:.4f}, Normal/Ab: {sil_na:.4f}"
+        )
+
+        # ── 그룹별 플롯 (한 ax에 4개 그룹 오버레이, 색+마커+edge로 확실히 구분) ──
+        ax = axes4[row_idx]
+        s0 = 0
+        for gname, style in GROUP_STYLES.items():
+            s1 = s0 + n_per_group
+            ax.scatter(
+                coords[s0:s1, 0], coords[s0:s1, 1],
+                c=style["color"], marker=style["marker"],
+                s=12, alpha=0.6, rasterized=True,
+                edgecolors="white", linewidths=0.3,
+                label=f"{gname} (n={n_per_group})",
+            )
+            s0 = s1
+
+        ax.set_title(
+            f"{model_name}  (feature_dim={data['feature_dim']})\n"
+            f"4-way sil={sil_4way:.3f}  |  "
+            f"Adult/Pedi sil={sil_ap:.3f}  |  Normal/Ab sil={sil_na:.3f}",
+            fontsize=11,
+        )
+        ax.legend(fontsize=9, markerscale=3, loc="best")
+        ax.set_xlabel("UMAP 1")
+        ax.set_ylabel("UMAP 2")
+
+    # ── 저장 ──
+    plt.suptitle(
+        "ECG Foundation Models — Balanced 4-Way UMAP\n"
+        "(Adult-Normal / Adult-Abnormal / Pediatric-Normal / Pediatric-Abnormal)",
+        fontsize=14, y=1.005,
+    )
+    plt.tight_layout()
+
+    fig_path = os.path.join(args.output_dir, "umap_all_models_4way.png")
+    plt.savefig(fig_path, dpi=150, bbox_inches="tight")
+    logging.info(f"\n[4-way] 그림 저장: {fig_path}")
+    plt.close(fig4)
+
+    # ── Silhouette CSV ──
+    csv_path = os.path.join(args.output_dir, "umap_silhouette_scores_4way.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "model", "feature_dim", "n_per_group",
+            "silhouette_4way", "silhouette_adult_vs_pedi", "silhouette_normal_vs_abnormal",
         ])
         writer.writeheader()
         writer.writerows(silhouette_records)
@@ -482,15 +620,15 @@ def main():
 
     # ── 터미널 요약 ──
     logging.info(f"\n{'='*80}")
-    logging.info(f"{'Model':<20} {'Dim':>5} {'N_ptbxl':>8} {'N_zzu':>7} {'Adult/Pedi':>12} {'PTB-XL N/Ab':>13} {'ZZU N/Ab':>10}")
+    logging.info(f"{'Model':<20} {'Dim':>5} {'N/group':>8} {'4way':>8} {'Adult/Pedi':>12} {'Normal/Ab':>11}")
     logging.info(f"{'-'*80}")
     for rec in silhouette_records:
         logging.info(
             f"{rec['model']:<20} {rec['feature_dim']:>5} "
-            f"{rec['n_ptbxl']:>8} {rec['n_zzu']:>7} "
-            f"{rec['adult_vs_pediatric']:>12.4f} "
-            f"{rec['ptbxl_normal_vs_abnormal']:>13.4f} "
-            f"{rec['zzu_normal_vs_abnormal']:>10.4f}"
+            f"{rec['n_per_group']:>8} "
+            f"{rec['silhouette_4way']:>8.4f} "
+            f"{rec['silhouette_adult_vs_pedi']:>12.4f} "
+            f"{rec['silhouette_normal_vs_abnormal']:>11.4f}"
         )
     logging.info(f"{'='*80}")
 
