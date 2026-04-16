@@ -1,0 +1,29 @@
+{
+  "dataset": "ptbxl_sub",
+  "n_labels": 23,
+  "labels": {
+    "AMI": "AMI",
+    "CLBBB": "CLBBB",
+    "CRBBB": "CRBBB",
+    "ILBBB": "ILBBB",
+    "IMI": "IMI",
+    "IRBBB": "IRBBB",
+    "ISCA": "ISCA",
+    "ISCI": "ISCI",
+    "ISC_": "ISC_",
+    "IVCD": "IVCD",
+    "LAFB_LPFB": "LAFB/LPFB",
+    "LAO_LAE": "LAO/LAE",
+    "LMI": "LMI",
+    "LVH": "LVH",
+    "NORM": "NORM",
+    "NST_": "NST_",
+    "PMI": "PMI",
+    "RAO_RAE": "RAO/RAE",
+    "RVH": "RVH",
+    "SEHYP": "SEHYP",
+    "STTC": "STTC",
+    "WPW": "WPW",
+    "_AVB": "_AVB"
+  }
+}

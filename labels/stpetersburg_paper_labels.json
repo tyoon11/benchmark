@@ -1,0 +1,13 @@
+{
+  "dataset": "stpetersburg",
+  "n_labels": 7,
+  "labels": {
+    "PVCs": "PVCs",
+    "bradycardia": "bradycardia",
+    "coronary_artery_disease": "coronary artery disease",
+    "left_ventricular_hypertrophy": "left ventricular hypertrophy",
+    "paroxysmal_vt": "paroxysmal vt",
+    "tachycardia": "tachycardia",
+    "ventricular_couplets": "ventricular couplets"
+  }
+}

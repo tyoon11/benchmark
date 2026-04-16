@@ -1,4 +1,5 @@
 from .ecg_jepa import ECGJEPAEncoder
+from .ecg_fm import ECGFMEncoder
 from .ecg_founder import ECGFounderEncoder
 from .st_mem import StMemEncoder
 from .merl import MerlResNetEncoder, MerlViTEncoder

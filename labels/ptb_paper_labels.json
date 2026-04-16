@@ -1,0 +1,15 @@
+{
+  "dataset": "ptb",
+  "n_labels": 9,
+  "labels": {
+    "atrial_fibrillation": "atrial fibrillation",
+    "bundle_branch_block": "bundle branch block",
+    "coronary_artery_disease": "coronary artery disease",
+    "dysrhythmia": "dysrhythmia",
+    "hypertrophy": "hypertrophy",
+    "myocardial_infarction": "myocardial infarction",
+    "sinus_rhythm": "sinus rhythm",
+    "ventricular_fibrillation": "ventricular fibrillation",
+    "vt_ventricular_tachycardia": "vt ventricular tachycardia"
+  }
+}

@@ -359,11 +359,95 @@ def main():
     trainer = DownstreamTrainer(model, train_loader, val_loader, test_loader, trainer_cfg)
     results = trainer.train()
 
+    # ── 통합 CSV에 append (rank 0만) ──
     if is_main_process():
+        _append_result_csv(
+            args=args,
+            task=args.task,
+            eval_mode=eval_mode,
+            encoder_cls=args.encoder_cls or "dummy",
+            num_classes=num_classes,
+            save_dir=save_dir,
+            train_size=len(train_ds),
+            val_size=len(val_ds),
+            test_size=len(test_loader.dataset) if test_loader else 0,
+            results=results,
+        )
         logging.info(f"Results saved to: {save_dir}")
 
     cleanup_distributed()
     return results
+
+
+def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
+                      save_dir, train_size, val_size, test_size, results):
+    """
+    각 실험 결과를 results_all.csv에 row로 추가 (thread-safe append).
+    save_dir 상위 폴더(예: results/{timestamp}/)에 저장됩니다.
+    """
+    from pathlib import Path
+    import csv, fcntl
+
+    save_path = Path(save_dir)
+    parent = save_path.parent
+    csv_path = parent / "results_all.csv"
+
+    # 모델 이름 (encoder_cls → 마지막 클래스명)
+    model_name = encoder_cls.rsplit(".", 1)[-1] if "." in encoder_cls else encoder_cls
+    model_name = model_name.replace("Encoder", "").lower()
+
+    # test_metrics.txt 읽기
+    test_m = _read_metrics(save_path / "test_metrics.txt")
+    val_m = _read_metrics(save_path / "val_metrics.txt")
+
+    row = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "model": model_name,
+        "task": task,
+        "eval_mode": eval_mode,
+        "num_classes": num_classes,
+        "train_size": train_size,
+        "val_size": val_size,
+        "test_size": test_size,
+        "best_val_auroc": results.get("best_val_auroc", float("nan")),
+        "best_epoch": results.get("best_epoch", -1),
+        "test_auroc_macro": test_m.get("auroc_macro", float("nan")),
+        "test_auroc_micro": test_m.get("auroc_micro", float("nan")),
+        "test_auprc_macro": test_m.get("auprc_macro", float("nan")),
+        "test_f1_macro":    test_m.get("f1_macro", float("nan")),
+        "val_auroc_macro": val_m.get("auroc_macro", float("nan")),
+        "save_dir": str(save_dir),
+    }
+
+    # file lock + append (여러 실험 동시 실행 대비)
+    new_file = not csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            if new_file:
+                writer.writeheader()
+            writer.writerow(row)
+            f.flush()
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _read_metrics(path):
+    """metrics txt 파일에서 key: value 파싱"""
+    from pathlib import Path
+    if not Path(path).exists():
+        return {}
+    result = {}
+    with open(path) as f:
+        for line in f:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                try:
+                    result[k.strip()] = float(v.strip())
+                except ValueError:
+                    pass
+    return result
 
 
 if __name__ == "__main__":

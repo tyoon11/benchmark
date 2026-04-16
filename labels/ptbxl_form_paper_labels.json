@@ -1,0 +1,25 @@
+{
+  "dataset": "ptbxl_form",
+  "n_labels": 19,
+  "labels": {
+    "ABQRS": "ABQRS",
+    "DIG": "DIG",
+    "HVOLT": "HVOLT",
+    "INVT": "INVT",
+    "LNGQT": "LNGQT",
+    "LOWT": "LOWT",
+    "LPR": "LPR",
+    "LVOLT": "LVOLT",
+    "NDT": "NDT",
+    "NST_": "NST_",
+    "NT_": "NT_",
+    "PAC": "PAC",
+    "PRCS": "PRC(S)",
+    "PVC": "PVC",
+    "QWAVE": "QWAVE",
+    "STD_": "STD_",
+    "STE_": "STE_",
+    "TAB_": "TAB_",
+    "VCLVH": "VCLVH"
+  }
+}
