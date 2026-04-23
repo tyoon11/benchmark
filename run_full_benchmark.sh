@@ -21,6 +21,10 @@ RESUME_TS=${2:-}    # 두 번째 인자: 기존 timestamp로 resume
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 
+# CPC(S4/pykeops)가 요구하는 GLIBCXX_3.4.32 심볼이 시스템 libstdc++에는 없음.
+# tykim conda env의 libstdc++.so.6.0.34를 preload해서 JIT 컴파일된 nvrtc_jit.so 로드를 성공시킴.
+export LD_PRELOAD=/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6
+
 if [ -n "$RESUME_TS" ]; then
     TIMESTAMP="$RESUME_TS"
     echo "Resume mode: 기존 폴더 사용 → results/$TIMESTAMP"
@@ -33,31 +37,30 @@ LOG="$RESULT_DIR/benchmark.log"
 mkdir -p "$RESULT_DIR"
 
 # ─────────────────────────────────────────────────────────────
-# 모델
+# 모델 레지스트리 (configs/models.sh에서 관리)
+#   새 모델 추가는 configs/models.sh만 편집
+#   MODELS_OVERRIDE="ecg_jepa st_mem" 으로 원하는 모델만 실행 가능
 # ─────────────────────────────────────────────────────────────
-MODEL_NAMES=(ecg_founder ecg_jepa st_mem merl ecgfm_ked hubert_ecg ecg_fm cpc)
+source "$SCRIPT_DIR/configs/models.sh"
 
-MODEL_CLS=(
-    "src.encoders.ecg_founder.ECGFounderEncoder"
-    "src.encoders.ecg_jepa.ECGJEPAEncoder"
-    "src.encoders.st_mem.StMemEncoder"
-    "src.encoders.merl.MerlResNetEncoder"
-    "src.encoders.ecgfm_ked.EcgFmKEDEncoder"
-    "src.encoders.hubert_ecg.HuBERTECGEncoder"
-    "src.encoders.ecg_fm.ECGFMEncoder"
-    "src.encoders.cpc.CPCEncoder"
-)
+if [ -n "$MODELS_OVERRIDE" ]; then
+    MODEL_NAMES=($MODELS_OVERRIDE)
+else
+    MODEL_NAMES=("${MODEL_NAMES_DEFAULT[@]}")
+fi
 
-MODEL_CKPT=(
-    "/home/irteam/ddn-opendata1/model/ECGFMs/ecg_founder/12_lead_ECGFounder.pth"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/ecg_jepa/multiblock_epoch100.pth"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/st_mem/st_mem_vit_base_full.pth"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/merl/res18_best_encoder.pth"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/hubert_ecg/hubert_ecg_base.safetensors"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
-    "/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
-)
+# name array를 cls/ckpt 배열로 전개 (기존 코드 호환)
+MODEL_CLS=()
+MODEL_CKPT=()
+for m in "${MODEL_NAMES[@]}"; do
+    if [ -z "${MODEL_CLS_MAP[$m]}" ]; then
+        echo "[ERROR] 알 수 없는 모델: $m"
+        echo "  사용 가능: ${!MODEL_CLS_MAP[*]}"
+        exit 1
+    fi
+    MODEL_CLS+=("${MODEL_CLS_MAP[$m]}")
+    MODEL_CKPT+=("${MODEL_CKPT_MAP[$m]}")
+done
 
 # GPU 환경변수로 override 가능: GPU_IDS_OVERRIDE="2 3 4 5 6" bash run_full_benchmark.sh ...
 if [ -n "$GPU_IDS_OVERRIDE" ]; then
@@ -70,14 +73,18 @@ N_GPUS=${#GPU_IDS[@]}
 # ─────────────────────────────────────────────────────────────
 # 태스크
 # ─────────────────────────────────────────────────────────────
-TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub zzu_pecg)
+if [ -n "$TASKS_OVERRIDE" ]; then
+    TASKS=($TASKS_OVERRIDE)
+else
+    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm zzu_pecg)
+fi
 
 # ─────────────────────────────────────────────────────────────
-# 설정
+# 설정 (ecg-fm-benchmarking 원본 동일: epochs=100, lr=1e-3, const schedule)
 # ─────────────────────────────────────────────────────────────
-EPOCHS=50
-FINETUNE_EPOCHS=30
-FINETUNE_LR="5e-4"
+EPOCHS=100
+FINETUNE_EPOCHS=100
+FINETUNE_LR="1e-3"
 
 if [ "$EVAL_MODE" = "all" ]; then
     MODES=(linear_probe attention_probe finetune_linear finetune_attention)

@@ -1,15 +1,24 @@
 {
   "dataset": "ptb",
-  "n_labels": 9,
+  "n_labels": 18,
   "labels": {
-    "atrial_fibrillation": "atrial fibrillation",
-    "bundle_branch_block": "bundle branch block",
-    "coronary_artery_disease": "coronary artery disease",
-    "dysrhythmia": "dysrhythmia",
-    "hypertrophy": "hypertrophy",
-    "myocardial_infarction": "myocardial infarction",
-    "sinus_rhythm": "sinus rhythm",
-    "ventricular_fibrillation": "ventricular fibrillation",
-    "vt_ventricular_tachycardia": "vt ventricular tachycardia"
+    "Arterial_hypertension": "Arterial hypertension",
+    "Atrial_fibrillation": "Atrial fibrillation",
+    "Bundle_branch_block": "Bundle branch block",
+    "Cardiomyopathy": "Cardiomyopathy",
+    "Coronary_artery_disease": "Coronary artery disease",
+    "Diabetes_mellitus": "Diabetes mellitus",
+    "Dysrhythmia": "Dysrhythmia",
+    "Healthy_control": "Healthy control",
+    "Hypercholesterinemia": "Hypercholesterinemia",
+    "Hyperlipoproteinemia": "Hyperlipoproteinemia",
+    "Myocardial_infarction_acute": "Myocardial infarction acute",
+    "Myocardial_infarction_acute_catheterized": "Myocardial infarction acute catheterized",
+    "Myocardial_infarction_old": "Myocardial infarction old",
+    "Obesity": "Obesity",
+    "Peripheral_atherosclerosis": "Peripheral atherosclerosis",
+    "Renal_insufficiency": "Renal insufficiency",
+    "Ventricular_fibrillation": "Ventricular fibrillation",
+    "Ventricular_tachycardia": "Ventricular tachycardia"
   }
 }

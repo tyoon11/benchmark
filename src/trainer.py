@@ -51,13 +51,18 @@ class DownstreamTrainer:
             weight_decay=float(self.cfg.get("weight_decay", 0.01)),
         )
 
-        # 스케줄러
-        self.epochs = int(self.cfg.get("epochs", 50))
-        warmup = int(self.cfg.get("warmup_epochs", 5))
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=max(self.epochs - warmup, 1),
-            eta_min=float(self.cfg.get("lr_min", 1e-6)),
-        )
+        # 스케줄러 (paper: const by default)
+        self.epochs = int(self.cfg.get("epochs", 100))
+        warmup = int(self.cfg.get("warmup_epochs", 0))
+        schedule = str(self.cfg.get("lr_schedule", "const"))
+        self.lr_schedule = schedule
+        if schedule == "const":
+            self.scheduler = None
+        else:
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=max(self.epochs - warmup, 1),
+                eta_min=float(self.cfg.get("lr_min", 1e-6)),
+            )
         self.warmup_epochs = warmup
         self.lr = lr
 
@@ -91,8 +96,8 @@ class DownstreamTrainer:
             if self.use_ddp and hasattr(self.train_loader.sampler, "set_epoch"):
                 self.train_loader.sampler.set_epoch(epoch)
 
-            # Warmup LR
-            if epoch < self.warmup_epochs:
+            # Warmup LR (only if warmup_epochs > 0)
+            if self.warmup_epochs > 0 and epoch < self.warmup_epochs:
                 warmup_lr = self.lr * (epoch + 1) / self.warmup_epochs
                 for pg in self.optimizer.param_groups:
                     if "_lr_ratio" not in pg:
@@ -102,7 +107,7 @@ class DownstreamTrainer:
             train_loss = self._train_epoch(epoch)
             val_metrics = self._eval_epoch(self.val_loader, "val")
 
-            if epoch >= self.warmup_epochs:
+            if self.scheduler is not None and epoch >= self.warmup_epochs:
                 self.scheduler.step()
 
             # Logging (rank 0만)

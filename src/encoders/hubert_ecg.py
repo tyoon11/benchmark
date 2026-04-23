@@ -9,6 +9,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from pathlib import Path
 
 ECG_FM_BENCH = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code")
@@ -20,7 +21,8 @@ class HuBERTECGEncoder(nn.Module):
     HuBERT-ECG encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 2500) at 500Hz
+      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 100Hz × 10s (1000 samples)
+           then cropped to 5s (500 samples) internally
       - pooled_features: (B, 768)
     """
 
@@ -56,12 +58,17 @@ class HuBERTECGEncoder(nn.Module):
         return np.stack(processed, axis=0)
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz"""
+        """x: (B, 12, 5000) at 500Hz → resample to 100Hz × 10s (1000) → crop to 5s (500)"""
         x = torch.nan_to_num(x)
+        # Resample 500Hz × 10s → 100Hz × 10s = 1000 samples
+        x = F.interpolate(x, size=1000, mode="linear", align_corners=False)
+        # Crop to input_size × fs_model = 5s × 100Hz = 500 samples
+        x = x[:, :, :500]
+
         x_np = x.detach().cpu().numpy()
         x_np = self._preprocess(x_np)
         x = torch.from_numpy(x_np).to(x.device).float()
-        x = x.reshape(x.shape[0], -1)  # (B, 12*2500)
+        x = x.reshape(x.shape[0], -1)  # (B, 12*500)
 
         encodings = self.encoder(x, return_dict=True)
         seq = encodings.last_hidden_state     # (B, T, 768)

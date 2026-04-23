@@ -1,13 +1,13 @@
-# ptbxl_all (50-class multi-label)
+# ptbxl_all (71-class multi-label, paper)
 data:
   batch_size: 64
   h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
-  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/ptbxl_all_bench_labels.csv
+  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/ptbxl_all_paper_labels.csv
   normalize: false
   num_workers: 8
   table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptbxl_table.csv
   target_fs: 500
-  target_length: 2500
+  target_length: 5000
 task:
   name: ptbxl_all
-  num_classes: 50
+  num_classes: 71

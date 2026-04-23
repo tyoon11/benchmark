@@ -21,9 +21,20 @@ class StMemEncoder(nn.Module):
     ST-MEM encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 2500) at 500Hz — resampled to 250Hz internally
+      - x: (B, 12, 5000) at 500Hz — resampled to 250Hz × 10s, cropped to
+           paper's input_size (2.4s = 600 samples), then zero-padded to the
+           pretrained seq_len (2250) to keep the fixed pos_embedding shape.
       - pooled_features: (B, 768)
+
+    Note: The pretrained checkpoint has pos_embedding sized for seq_len=2250
+          (patch_size=75 → 30 patches + 2 SEP). We cannot change seq_len
+          without breaking checkpoint loading, so we crop to the paper's
+          input_size (600 samples at 250Hz = 2.4s) and pad the remainder
+          with zeros to reach seq_len=2250.
     """
+
+    # Paper's input spec: 2.4s × 250Hz = 600 samples
+    PAPER_INPUT_SAMPLES = 600
 
     def __init__(self, checkpoint=None, seq_len=2250, patch_size=75):
         super().__init__()
@@ -50,16 +61,20 @@ class StMemEncoder(nn.Module):
         print(f"[StMemEncoder] Loaded from {path}")
 
     def _resample(self, x):
-        """500Hz 2500 → 250Hz 1250 → zero-pad to seq_len"""
-        x = F.interpolate(x, size=1250, mode="linear", align_corners=False)
-        if 1250 < self.seq_len:
-            x = F.pad(x, (0, self.seq_len - 1250))
+        """500Hz 5000 (10s) → 250Hz 2500 → crop to 600 (2.4s) → zero-pad to seq_len"""
+        # Resample to 250Hz × 10s = 2500 samples
+        x = F.interpolate(x, size=2500, mode="linear", align_corners=False)
+        # Crop to paper's input_size: 2.4s × 250Hz = 600 samples (from start)
+        x = x[:, :, : self.PAPER_INPUT_SAMPLES]
+        # Zero-pad to pretrained seq_len (2250) so pos_embedding aligns
+        if x.shape[-1] < self.seq_len:
+            x = F.pad(x, (0, self.seq_len - x.shape[-1]))
         else:
             x = x[:, :, : self.seq_len]
         return x
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz"""
+        """x: (B, 12, 5000) at 500Hz"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)

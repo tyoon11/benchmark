@@ -46,7 +46,7 @@ class EcgFmKEDEncoder(nn.Module):
     ECG-FM-KED (xresnet1d101) encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 2500) at 500Hz — resampled to 100Hz (500 samples) internally
+      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 100Hz × 10s (1000 samples) internally
       - pooled_features: (B, 768)
     """
 
@@ -79,11 +79,14 @@ class EcgFmKEDEncoder(nn.Module):
         print(f"[EcgFmKEDEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz → resample to 100Hz (500 samples)"""
+        """x: (B, 12, 5000) at 500Hz → resample to 100Hz × 10s = 1000 samples"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)
-        x = F.interpolate(x, size=500, mode="linear", align_corners=False)
+        # Resample to 100Hz × 10s = 1000 samples
+        x = F.interpolate(x, size=1000, mode="linear", align_corners=False)
+        # Crop to input_size × fs_model = 10s × 100Hz = 1000 samples (full)
+        x = x[:, :, :1000]
 
         # nn.Sequential forward — DataParallel safe (모델이 같은 device에 있음)
         seq = nn.Sequential.forward(self.model, x)  # (B, 768, T')
