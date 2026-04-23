@@ -1,13 +1,13 @@
-# code15 (6-class multi-label)
+# code15 (6-class multi-label, paper)
 data:
   batch_size: 64
   h5_root: /home/irteam/ddn-opendata1/h5/code15/v2.0
-  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/code15_bench_labels.csv
+  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/code15_paper_labels.csv
   normalize: false
   num_workers: 8
   table_csv: /home/irteam/ddn-opendata1/h5/code15/v2.0/code15_table.csv
-  target_fs: 400
-  target_length: 2500
+  target_fs: 500
+  target_length: 5000
 task:
   name: code15
   num_classes: 6

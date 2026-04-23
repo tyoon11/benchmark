@@ -9,6 +9,7 @@ Embedding dimension: 1024
 import sys
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from pathlib import Path
 
 ECG_FM_BENCH = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code")
@@ -20,7 +21,7 @@ class ECGFounderEncoder(nn.Module):
     ECG-Founder encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 2500)
+      - x: (B, 12, 5000) at 500Hz (10s) — cropped to 2.5s (1250 samples) internally
       - sequence_features: (B, seq_len, 1024)
       - pooled_features:   (B, 1024)
     """
@@ -64,8 +65,12 @@ class ECGFounderEncoder(nn.Module):
         print(f"[ECGFounderEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz"""
+        """x: (B, 12, 5000) at 500Hz → crop to 1250 samples (2.5s)"""
         x = torch.nan_to_num(x)
+        # Resample to 500Hz × 10s = 5000 samples (already at 500Hz, identity)
+        x = F.interpolate(x, size=5000, mode="linear", align_corners=False)
+        # Crop to first input_size × fs_model = 2.5s × 500Hz = 1250 samples
+        x = x[:, :, :1250]
         out = self.model.first_conv(x)
         if self.model.use_bn:
             out = self.model.first_bn(out)

@@ -7,21 +7,40 @@ H5 기반 ECG 다운스트림 태스크 벤치마크 프레임워크.
 
 ```
 benchmark/
-├── run.py                         # 엔트리포인트
+├── run.py                         # 단일 실험 엔트리포인트
+├── run_full_benchmark.sh          # 전 모델 × 전 태스크 병렬 벤치마크
+├── run_parallel_tasks.sh          # 단일 모델 × 전 태스크
 ├── configs/
 │   ├── default.yaml               # 기본 학습 설정
-│   └── tasks/
-│       ├── ptbxl_super.yaml       # PTB-XL 5-class
-│       ├── physionet_all.yaml     # PhysioNet 31-class
-│       ├── code15_diag.yaml       # CODE-15% 6-class
-│       └── cpsc2021_af.yaml       # CPSC2021 AF 3-class (2리드)
+│   ├── models.sh                  # 모델 레지스트리 (encoder_cls / checkpoint 경로)
+│   └── tasks/                     # 태스크별 데이터/라벨 설정
+│       ├── ptbxl_super.yaml
+│       ├── ptbxl_sub.yaml
+│       ├── ptbxl_diag.yaml
+│       ├── ptbxl_form.yaml
+│       ├── ptbxl_rhythm.yaml
+│       ├── chapman.yaml
+│       ├── chapman_rhythm.yaml
+│       ├── code15.yaml
+│       ├── cpsc2018.yaml
+│       ├── cpsc_extra.yaml
+│       ├── georgia.yaml
+│       ├── ningbo.yaml
+│       ├── ptb.yaml
+│       └── zzu_pecg.yaml
+├── labels/                        # 태스크별 라벨 CSV/JSON (논문 동일 라벨셋)
+├── scripts/
+│   ├── build_benchmark_labels.py  # 라벨 파이프라인
+│   ├── build_labels_paper.py      # 논문 동일 라벨 생성
+│   └── build_folds.py             # 계층화 fold split
 ├── src/
 │   ├── dataset.py                 # H5ECGDataset
 │   ├── wrapper.py                 # DownstreamWrapper (encoder-agnostic)
 │   ├── heads.py                   # LinearHead, AttentionPoolingHead, MLPHead
 │   ├── trainer.py                 # DownstreamTrainer (학습/평가 루프)
-│   └── metrics.py                 # AUROC, AUPRC, F1
-└── results/                       # 실험 결과 저장
+│   ├── metrics.py                 # AUROC, AUPRC, F1
+│   └── encoders/                  # 모델별 encoder adapter
+└── results/                       # 실험 결과 저장 (gitignore)
 ```
 
 ## Eval Modes
@@ -91,6 +110,62 @@ python run.py --task cpsc2021_af --eval_mode finetune_attention \
 ```bash
 python run.py --task ptbxl_super --eval_mode linear_probe --dummy \
     --epochs 10 --lr 3e-4 --batch_size 128 --device cuda:1
+```
+
+## 모델 추가
+
+새 모델을 벤치마크에 플러그인하는 절차:
+
+### 1) Encoder adapter 작성
+
+`src/encoders/my_model.py` 생성. 요구사항은 위 "Encoder 요구사항" 참조.
+
+```python
+import torch.nn as nn
+
+class MyModelEncoder(nn.Module):
+    def __init__(self, checkpoint: str = None, **kwargs):
+        super().__init__()
+        self.feature_dim = 768          # 필수
+        # 실제 모델 로드 + checkpoint load
+        ...
+
+    def forward(self, x):               # x: (B, 12, seq_len)
+        # ...
+        return seq_feat, pooled         # (B, T, D), (B, D)
+```
+
+### 2) `src/encoders/__init__.py`에 export
+
+```python
+from .my_model import MyModelEncoder
+```
+
+### 3) `configs/models.sh`에 등록 (2줄)
+
+```bash
+MODEL_CLS_MAP[my_model]="src.encoders.my_model.MyModelEncoder"
+MODEL_CKPT_MAP[my_model]="/path/to/my_model.pt"
+# 전체 벤치마크 기본 실행 순서에 포함하려면:
+MODEL_NAMES_DEFAULT+=(my_model)
+```
+
+### 4) 단일 실행 확인
+
+```bash
+python run.py --task ptbxl_super --eval_mode linear_probe \
+    --encoder_cls src.encoders.my_model.MyModelEncoder \
+    --encoder_ckpt /path/to/my_model.pt --epochs 3
+```
+
+### 5) 전체 벤치마크 실행
+
+```bash
+# 추가한 모델만
+MODELS_OVERRIDE="my_model" bash run_full_benchmark.sh
+
+# 전 모델 × 전 태스크
+bash run_full_benchmark.sh all
 ```
 
 ## 태스크 추가

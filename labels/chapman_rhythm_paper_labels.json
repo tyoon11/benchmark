@@ -1,0 +1,14 @@
+{
+  "dataset": "chapman_rhythm",
+  "n_labels": 8,
+  "labels": {
+    "AF": "AF",
+    "AFIB": "AFIB",
+    "AT": "AT",
+    "AVNRT": "AVNRT",
+    "SB": "SB",
+    "SR": "SR",
+    "ST": "ST",
+    "SVT": "SVT"
+  }
+}

@@ -47,18 +47,18 @@ LABEL_DIR = SCRIPT_DIR / "labels"
 
 DATASETS = {
     # physionet: 파일 기반 라벨 stratify (논문 동일)
-    "chapman":      {"table": H5_ROOT / "physionet/v2.0/chapman_table.csv",      "label": LABEL_DIR / "chapman_bench_labels.csv",      "n_folds": 10, "method": "label"},
-    "cpsc2018":     {"table": H5_ROOT / "physionet/v2.0/cpsc2018_table.csv",     "label": LABEL_DIR / "cpsc2018_bench_labels.csv",     "n_folds": 10, "method": "label"},
-    "cpsc_extra":   {"table": H5_ROOT / "physionet/v2.0/cpsc_extra_table.csv",   "label": LABEL_DIR / "cpsc_extra_bench_labels.csv",   "n_folds": 10, "method": "label"},
-    "georgia":      {"table": H5_ROOT / "physionet/v2.0/georgia_table.csv",      "label": LABEL_DIR / "georgia_bench_labels.csv",      "n_folds": 10, "method": "label"},
-    "ningbo":       {"table": H5_ROOT / "physionet/v2.0/ningbo_table.csv",       "label": LABEL_DIR / "ningbo_bench_labels.csv",       "n_folds": 10, "method": "label"},
-    "ptb":          {"table": H5_ROOT / "physionet/v2.0/ptb_table.csv",          "label": LABEL_DIR / "ptb_bench_labels.csv",          "n_folds": 5,  "method": "label"},
+    "chapman":      {"table": H5_ROOT / "physionet/v2.0/chapman_table.csv",      "label": LABEL_DIR / "chapman_paper_labels.csv",      "n_folds": 10, "method": "label"},
+    "cpsc2018":     {"table": H5_ROOT / "physionet/v2.0/cpsc2018_table.csv",     "label": LABEL_DIR / "cpsc2018_paper_labels.csv",     "n_folds": 10, "method": "label"},
+    "cpsc_extra":   {"table": H5_ROOT / "physionet/v2.0/cpsc_extra_table.csv",   "label": LABEL_DIR / "cpsc_extra_paper_labels.csv",   "n_folds": 10, "method": "label"},
+    "georgia":      {"table": H5_ROOT / "physionet/v2.0/georgia_table.csv",      "label": LABEL_DIR / "georgia_paper_labels.csv",      "n_folds": 10, "method": "label"},
+    "ningbo":       {"table": H5_ROOT / "physionet/v2.0/ningbo_table.csv",       "label": LABEL_DIR / "ningbo_paper_labels.csv",       "n_folds": 10, "method": "label"},
+    "ptb":          {"table": H5_ROOT / "physionet/v2.0/ptb_table.csv",          "label": LABEL_DIR / "ptb_paper_labels.csv",          "n_folds": 5,  "method": "label"},
     # ptbxl: 원본 strat_fold 사용
-    "ptbxl":        {"table": H5_ROOT / "physionet/v2.0/ptbxl_table.csv",        "label": LABEL_DIR / "ptbxl_all_bench_labels.csv",    "n_folds": 10, "method": "ptbxl_original"},
+    "ptbxl":        {"table": H5_ROOT / "physionet/v2.0/ptbxl_table.csv",        "label": LABEL_DIR / "ptbxl_all_paper_labels.csv",    "n_folds": 10, "method": "ptbxl_original"},
     # code15: 환자 기반 stratify
-    "code15":       {"table": H5_ROOT / "code15/v2.0/code15_table.csv",          "label": LABEL_DIR / "code15_bench_labels.csv",       "n_folds": 10, "method": "patient"},
+    "code15":       {"table": H5_ROOT / "code15/v2.0/code15_table.csv",          "label": LABEL_DIR / "code15_paper_labels.csv",       "n_folds": 10, "method": "patient"},
     # zzu: 파일 기반
-    "zzu_pecg":     {"table": H5_ROOT / "ZZU-pECG/v2.0/ecg_table.csv",          "label": LABEL_DIR / "zzu_bench_labels.csv",          "n_folds": 10, "method": "label"},
+    "zzu_pecg":     {"table": H5_ROOT / "ZZU-pECG/v2.0/ecg_table.csv",          "label": LABEL_DIR / "zzu_paper_labels.csv",          "n_folds": 10, "method": "label"},
 }
 
 

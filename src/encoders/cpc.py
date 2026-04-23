@@ -11,7 +11,9 @@ Hydra/Lightning 의존성 없이 체크포인트에서 직접 encoder + predicto
 임베딩에는 encoder + predictor 전체 출력을 사용합니다.
 """
 
+import os
 import sys
+import ctypes.util
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +21,64 @@ from pathlib import Path
 
 ECG_FM_BENCH = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code")
 sys.path.insert(0, str(ECG_FM_BENCH))
+
+
+def _prepend_env_path(name: str, value: Path) -> None:
+    if not value.exists():
+        return
+    current = os.environ.get(name, "")
+    parts = [p for p in current.split(":") if p]
+    value_str = str(value)
+    if value_str not in parts:
+        os.environ[name] = ":".join([value_str, *parts]) if parts else value_str
+
+
+def _configure_s4_runtime() -> None:
+    """Expose CUDA toolkit and compilers so PyKeOps can build its NVRTC backend."""
+    if getattr(_configure_s4_runtime, "_done", False):
+        return
+
+    env_prefix = Path(sys.executable).resolve().parents[1]
+    bin_dir = env_prefix / "bin"
+    lib_dir = env_prefix / "lib"
+    cuda_root = env_prefix / "targets" / "x86_64-linux"
+
+    gxx = bin_dir / "x86_64-conda-linux-gnu-g++"
+    gcc = bin_dir / "x86_64-conda-linux-gnu-gcc"
+    if gxx.exists():
+        os.environ.setdefault("CXX", str(gxx))
+    if gcc.exists():
+        os.environ.setdefault("CC", str(gcc))
+
+    _prepend_env_path("PATH", bin_dir)
+    _prepend_env_path("LD_LIBRARY_PATH", lib_dir)
+
+    # KeOps expects CUDA_PATH/include/{cuda.h,nvrtc.h}. In this conda layout,
+    # those headers live under targets/x86_64-linux/include.
+    if (cuda_root / "include" / "cuda.h").exists() and (cuda_root / "include" / "nvrtc.h").exists():
+        os.environ.setdefault("CUDA_PATH", str(cuda_root))
+        os.environ.setdefault("CUDA_HOME", str(cuda_root))
+
+    if not getattr(ctypes.util, "_ecgfm_find_library_patched", False):
+        real_find_library = ctypes.util.find_library
+        lib_map = {
+            "nvrtc": lib_dir / "libnvrtc.so",
+            "cudart": lib_dir / "libcudart.so",
+        }
+
+        def _patched_find_library(name: str):
+            candidate = lib_map.get(name)
+            if candidate is not None and candidate.exists():
+                return str(candidate)
+            return real_find_library(name)
+
+        ctypes.util.find_library = _patched_find_library
+        ctypes.util._ecgfm_find_library_patched = True
+
+    _configure_s4_runtime._done = True
+
+
+_configure_s4_runtime()
 
 
 def _build_conv_block(in_ch, out_ch, kernel_size=3, stride=1):
@@ -39,7 +99,8 @@ class CPCEncoder(nn.Module):
     S4 predictor 로드에 실패하면 encoder-only로 fallback합니다.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 2500) at 500Hz — resampled to 240Hz internally
+      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 240Hz × 10s (2400 samples)
+           and cropped to 2.5s (600 samples) internally
       - pooled_features: (B, 512)
     """
 
@@ -132,21 +193,26 @@ class CPCEncoder(nn.Module):
         print(f"[CPCEncoder] Loaded from {path} (epoch={ckpt.get('epoch', '?')})")
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz → resample to 240Hz"""
+        """x: (B, 12, 5000) at 500Hz → resample to 240Hz × 10s (2400) → crop to 2.5s (600)"""
         x = torch.nan_to_num(x)
-        target_len = int(2500 * 240 / 500)  # 1200
-        x = F.interpolate(x, size=target_len, mode="linear", align_corners=False)
+        # Resample 500Hz × 10s → 240Hz × 10s = 2400 samples
+        x = F.interpolate(x, size=2400, mode="linear", align_corners=False)
+        # Crop to input_size × fs_model = 2.5s × 240Hz = 600 samples
+        x = x[:, :, :600]
 
-        # Encoder: (B, 12, 1200) → (B, 512, 600)
+        # Encoder: (B, 12, 600) → (B, 512, T')
         enc_out = self.encoder(x)  # (B, 512, T')
 
         if self._has_predictor and self.predictor is not None:
             try:
                 pred_out = self.predictor(enc_out)
                 seq = pred_out.transpose(1, 2)
-            except Exception:
+            except Exception as e:
                 if not getattr(CPCEncoder, "_s4_warned", False):
-                    print("[CPCEncoder] S4 forward 실패 → encoder-only fallback")
+                    import traceback
+                    print(f"[CPCEncoder] S4 forward 실패 → encoder-only fallback: {type(e).__name__}: {e}")
+                    traceback.print_exc()
+                    print(f"[CPCEncoder] enc_out shape: {enc_out.shape}, dtype: {enc_out.dtype}, device: {enc_out.device}")
                     CPCEncoder._s4_warned = True
                 self._has_predictor = False
                 seq = enc_out.transpose(1, 2)

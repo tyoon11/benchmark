@@ -1,10 +1,11 @@
-# 기본 학습 설정
+# 기본 학습 설정 (ecg-fm-benchmarking 원본 동일)
 train:
-  epochs: 50
+  epochs: 100
   lr: 1e-3
   lr_min: 1e-6
-  weight_decay: 0.01
-  warmup_epochs: 5
+  weight_decay: 1e-3
+  warmup_epochs: 0          # paper uses const schedule
+  lr_schedule: const        # const | cosine | warmup_cos
   discriminative_lr_factor: 0.1
   device: cuda
 

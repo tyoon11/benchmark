@@ -1,13 +1,13 @@
-# cpsc2018 (9-class multi-label)
+# cpsc2018 (9-class multi-label, paper)
 data:
   batch_size: 64
   h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
-  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/cpsc2018_bench_labels.csv
+  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/cpsc2018_paper_labels.csv
   normalize: false
   num_workers: 8
   table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/cpsc2018_table.csv
   target_fs: 500
-  target_length: 2500
+  target_length: 5000
 task:
   name: cpsc2018
   num_classes: 9

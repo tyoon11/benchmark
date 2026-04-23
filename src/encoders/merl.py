@@ -19,7 +19,7 @@ sys.path.insert(0, str(ECG_FM_BENCH))
 class MerlResNetEncoder(nn.Module):
     """
     MERL ResNet18 encoder wrapper.
-    Input: (B, 12, 2500) at 500Hz — zero-padded to 5000 internally.
+    Input: (B, 12, 5000) at 500Hz (10s) — cropped to 2.5s (1250 samples) internally.
     """
 
     def __init__(self, checkpoint=None):
@@ -43,9 +43,12 @@ class MerlResNetEncoder(nn.Module):
         print(f"[MerlResNetEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz → pad to 5000"""
+        """x: (B, 12, 5000) at 500Hz → crop to 1250 samples (2.5s)"""
         x = torch.nan_to_num(x)
-        x = F.pad(x, (0, 2500))  # (B, 12, 5000)
+        # Resample to fs_model × 10s = 500Hz × 10s = 5000 (identity)
+        x = F.interpolate(x, size=5000, mode="linear", align_corners=False)
+        # Crop to input_size × fs_model = 2.5s × 500Hz = 1250 samples
+        x = x[:, :, :1250]
 
         out = torch.relu(self.model.bn1(self.model.conv1(x)))
         out = self.model.layer1(out)
@@ -62,7 +65,9 @@ class MerlResNetEncoder(nn.Module):
 class MerlViTEncoder(nn.Module):
     """
     MERL ViT-Tiny encoder wrapper.
-    Input: (B, 12, 2500) at 500Hz — zero-padded to 5000 internally.
+    Input: (B, 12, 5000) at 500Hz (10s) — cropped to 2.5s (1250 samples),
+    then zero-padded back to pretrained seq_len=5000 to keep the fixed
+    pos_embedding shape.
     """
 
     def __init__(self, checkpoint=None):
@@ -86,11 +91,16 @@ class MerlViTEncoder(nn.Module):
         print(f"[MerlViTEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 2500) at 500Hz → pad to 5000"""
+        """x: (B, 12, 5000) at 500Hz → crop to 1250 samples (2.5s), pad back to 5000"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)
-        x = F.pad(x, (0, 2500))  # (B, 12, 5000)
+        # Resample to fs_model × 10s = 500Hz × 10s = 5000 (identity)
+        x = F.interpolate(x, size=5000, mode="linear", align_corners=False)
+        # Crop to paper's input_size: 2.5s × 500Hz = 1250 samples
+        x = x[:, :, :1250]
+        # Zero-pad to pretrained seq_len=5000 for fixed pos_embedding compatibility
+        x = F.pad(x, (0, 5000 - 1250))
 
         x = self.model.to_patch_embedding(x)
         x = rearrange(x, "b c n -> b n c")
