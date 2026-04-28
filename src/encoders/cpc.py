@@ -13,11 +13,49 @@ Hydra/Lightning 의존성 없이 체크포인트에서 직접 encoder + predicto
 
 import os
 import sys
+import pickle
 import ctypes.util
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Stub-class unpickler for CPC Lightning checkpoint.
+# CPC ckpt 의 hyper_parameters 가 clinical_ts.template_modules 등 (우리가
+# bundle하지 않은 paper 내부 클래스) 를 참조해서 torch.load 시 ModuleNotFoundError.
+# state_dict 만 필요하니까 missing 클래스는 빈 stub으로 대체해 unpickle 통과시킴.
+# ──────────────────────────────────────────────────────────────────────
+class _StubUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        try:
+            return super().find_class(module, name)
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            return type(name, (), {})
+
+
+class _StubPickleModule:
+    Unpickler = _StubUnpickler
+    Pickler = pickle.Pickler
+    @staticmethod
+    def load(*args, **kwargs):
+        return _StubUnpickler(*args, **kwargs).load()
+    @staticmethod
+    def loads(s, **kwargs):
+        import io
+        return _StubUnpickler(io.BytesIO(s), **kwargs).load()
+    @staticmethod
+    def dump(obj, f, **kwargs):
+        return pickle.dump(obj, f, **kwargs)
+    @staticmethod
+    def dumps(obj, **kwargs):
+        return pickle.dumps(obj, **kwargs)
+
+
+def _stub_torch_load(path: str):
+    return torch.load(path, map_location="cpu", weights_only=False,
+                      pickle_module=_StubPickleModule)
 
 # clinical_ts subset is bundled under benchmark/src/external/
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
@@ -152,7 +190,7 @@ class CPCEncoder(nn.Module):
             self._load_checkpoint(checkpoint)
 
     def _load_checkpoint(self, path):
-        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        ckpt = _stub_torch_load(path)
         state = ckpt.get("state_dict", ckpt)
 
         # ── Load encoder weights ──
