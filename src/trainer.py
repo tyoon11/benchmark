@@ -154,7 +154,6 @@ class DownstreamTrainer:
 
             self.optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -171,10 +170,16 @@ class DownstreamTrainer:
 
     @torch.no_grad()
     def _eval_epoch(self, loader, prefix="val"):
-        """평가 (rank 0에서만 전체 데이터로 평가)"""
+        """평가 (rank 0에서만 전체 데이터로 평가).
+
+        Multi-window mode: 각 ECG가 N개 chunk로 쪼개져 있으면 batch에 ecg_id가
+        들어 있다. 모든 chunk 예측을 ecg_id별로 평균집계한 뒤 metric 계산
+        (paper §3.3 aggregate_predictions, aggregate_fn=np.mean).
+        """
         self.model.eval()
         all_preds = []
         all_targets = []
+        all_ids = []
 
         pbar = tqdm(loader, desc=f"Eval {prefix}",
                      leave=False, disable=not self.is_main)
@@ -187,16 +192,40 @@ class DownstreamTrainer:
 
             all_preds.append(preds)
             all_targets.append(label.numpy())
+            if "ecg_id" in batch:
+                ids = batch["ecg_id"]
+                if isinstance(ids, torch.Tensor):
+                    ids = ids.numpy()
+                else:
+                    ids = np.asarray(ids)
+                all_ids.append(ids)
 
         all_preds = np.concatenate(all_preds, axis=0)
         all_targets = np.concatenate(all_targets, axis=0)
+        all_ids = np.concatenate(all_ids, axis=0) if all_ids else None
 
         # DDP: 모든 rank의 예측을 gather (rank 0에서 메트릭 계산)
         if self.use_ddp:
-            all_preds, all_targets = self._gather_predictions(all_preds, all_targets)
+            all_preds, all_targets, all_ids = self._gather_predictions(
+                all_preds, all_targets, all_ids
+            )
 
         metrics = {}
         if self.is_main:
+            # ── Aggregate by ecg_id (mean over non-overlapping chunks) ──
+            if all_ids is not None and len(all_ids) > 0 and len(all_ids) != len(np.unique(all_ids)):
+                unique_ids = np.unique(all_ids)
+                agg_preds = np.empty((len(unique_ids), all_preds.shape[1]),
+                                     dtype=all_preds.dtype)
+                agg_targets = np.empty((len(unique_ids), all_targets.shape[1]),
+                                       dtype=all_targets.dtype)
+                for i, uid in enumerate(unique_ids):
+                    mask = (all_ids == uid)
+                    agg_preds[i] = all_preds[mask].mean(axis=0)
+                    agg_targets[i] = all_targets[mask][0]
+                all_preds = agg_preds
+                all_targets = agg_targets
+
             metrics = evaluate_all(all_targets, all_preds, self.label_names)
             result_path = self.save_dir / f"{prefix}_metrics.txt"
             with open(result_path, "w") as f:
@@ -212,10 +241,12 @@ class DownstreamTrainer:
 
         return metrics
 
-    def _gather_predictions(self, preds, targets):
-        """모든 rank의 예측을 rank 0으로 gather"""
+    def _gather_predictions(self, preds, targets, ids=None):
+        """모든 rank의 예측 (+ optional ecg_ids) 을 rank 0으로 gather"""
         preds_t = torch.from_numpy(preds).to(self.device)
         targets_t = torch.from_numpy(targets).to(self.device)
+        ids_t = (torch.from_numpy(ids).to(self.device).long()
+                 if ids is not None else None)
 
         # 각 rank의 데이터 크기가 다를 수 있으므로 크기 먼저 수집
         local_size = torch.tensor(preds_t.shape[0], device=self.device)
@@ -229,19 +260,29 @@ class DownstreamTrainer:
             pad_size = max_size - preds_t.shape[0]
             preds_t = torch.cat([preds_t, torch.zeros(pad_size, *preds_t.shape[1:], device=self.device)])
             targets_t = torch.cat([targets_t, torch.zeros(pad_size, *targets_t.shape[1:], device=self.device)])
+            if ids_t is not None:
+                ids_t = torch.cat([ids_t, torch.full((pad_size,), -1, device=self.device, dtype=ids_t.dtype)])
 
         gathered_preds = [torch.zeros_like(preds_t) for _ in range(self.world_size)]
         gathered_targets = [torch.zeros_like(targets_t) for _ in range(self.world_size)]
         dist.all_gather(gathered_preds, preds_t)
         dist.all_gather(gathered_targets, targets_t)
+        if ids_t is not None:
+            gathered_ids = [torch.zeros_like(ids_t) for _ in range(self.world_size)]
+            dist.all_gather(gathered_ids, ids_t)
 
         if self.is_main:
             # 패딩 제거
-            all_p = []
-            all_t = []
+            all_p, all_t, all_i = [], [], []
             for i, size in enumerate(all_sizes):
-                all_p.append(gathered_preds[i][:size.item()])
-                all_t.append(gathered_targets[i][:size.item()])
-            return torch.cat(all_p).cpu().numpy(), torch.cat(all_t).cpu().numpy()
+                n = size.item()
+                all_p.append(gathered_preds[i][:n])
+                all_t.append(gathered_targets[i][:n])
+                if ids_t is not None:
+                    all_i.append(gathered_ids[i][:n])
+            preds_out = torch.cat(all_p).cpu().numpy()
+            targets_out = torch.cat(all_t).cpu().numpy()
+            ids_out = torch.cat(all_i).cpu().numpy() if all_i else None
+            return preds_out, targets_out, ids_out
 
-        return preds, targets
+        return preds, targets, ids

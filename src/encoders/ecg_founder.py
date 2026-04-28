@@ -21,10 +21,15 @@ class ECGFounderEncoder(nn.Module):
     ECG-Founder encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 5000) at 500Hz (10s) — cropped to 2.5s (1250 samples) internally
+      - x: (B, 12, T) at data target_fs — resampled to 1250 samples (2.5s @ 500Hz)
       - sequence_features: (B, seq_len, 1024)
       - pooled_features:   (B, 1024)
     """
+
+    # Paper: input_size=2.5s, fs_model=500 → 1250 samples per window.
+    chunk_seconds = 2.5
+    model_fs = 500
+    model_seq_len = 1250
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -65,12 +70,10 @@ class ECGFounderEncoder(nn.Module):
         print(f"[ECGFounderEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 5000) at 500Hz → crop to 1250 samples (2.5s)"""
+        """x: (B, 12, T) at data target_fs → 1250 samples (2.5s @ 500Hz)"""
         x = torch.nan_to_num(x)
-        # Resample to 500Hz × 10s = 5000 samples (already at 500Hz, identity)
-        x = F.interpolate(x, size=5000, mode="linear", align_corners=False)
-        # Crop to first input_size × fs_model = 2.5s × 500Hz = 1250 samples
-        x = x[:, :, :1250]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
         out = self.model.first_conv(x)
         if self.model.use_bn:
             out = self.model.first_bn(out)
