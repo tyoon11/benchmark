@@ -39,14 +39,14 @@ MODEL_CLS[hubert_ecg]="src.encoders.hubert_ecg.HuBERTECGEncoder"
 MODEL_CLS[ecg_fm]="src.encoders.ecg_fm.ECGFMEncoder"
 MODEL_CLS[cpc]="src.encoders.cpc.CPCEncoder"
 
-MODEL_CKPT[ecg_founder]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_founder/12_lead_ECGFounder.pth"
-MODEL_CKPT[ecg_jepa]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_jepa/multiblock_epoch100.pth"
-MODEL_CKPT[st_mem]="/home/irteam/ddn-opendata1/model/ECGFMs/st_mem/st_mem_vit_base_full.pth"
-MODEL_CKPT[merl]="/home/irteam/ddn-opendata1/model/ECGFMs/merl/res18_best_encoder.pth"
-MODEL_CKPT[ecgfm_ked]="/home/irteam/ddn-opendata1/model/ECGFMs/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
-MODEL_CKPT[hubert_ecg]="/home/irteam/ddn-opendata1/model/ECGFMs/hubert_ecg/hubert_ecg_base.safetensors"
-MODEL_CKPT[ecg_fm]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
-MODEL_CKPT[cpc]="/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
+MODEL_CKPT[ecg_founder]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_founder/12_lead_ECGFounder.pth"
+MODEL_CKPT[ecg_jepa]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_jepa/multiblock_epoch100.pth"
+MODEL_CKPT[st_mem]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/st_mem/st_mem_vit_base_full.pth"
+MODEL_CKPT[merl]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/merl/res18_best_encoder.pth"
+MODEL_CKPT[ecgfm_ked]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
+MODEL_CKPT[hubert_ecg]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/hubert_ecg/hubert_ecg_base.safetensors"
+MODEL_CKPT[ecg_fm]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
+MODEL_CKPT[cpc]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/cpc/last_11597276.ckpt"
 
 # epochs / lr
 if [[ "$EVAL_MODE" == finetune_* ]]; then

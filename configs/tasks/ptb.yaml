@@ -1,11 +1,11 @@
 # ptb (18-class multi-label, paper prepare_ptbv2 via PTBDB Reason for admission)
 data:
   batch_size: 64
-  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  h5_root: ${ECG_DATA_ROOT}/h5/physionet/v2.0
   label_csv: labels/ptb_paper_labels.csv
   normalize: false
   num_workers: 8
-  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptb_table.csv
+  table_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/ptb_table.csv
   target_fs: 500
   target_length: 5000
 task:

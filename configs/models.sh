@@ -25,14 +25,14 @@ declare -A MODEL_CLS_MAP=(
 )
 
 declare -A MODEL_CKPT_MAP=(
-    [ecg_founder]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_founder/12_lead_ECGFounder.pth"
-    [ecg_jepa]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_jepa/multiblock_epoch100.pth"
-    [st_mem]="/home/irteam/ddn-opendata1/model/ECGFMs/st_mem/st_mem_vit_base_full.pth"
-    [merl]="/home/irteam/ddn-opendata1/model/ECGFMs/merl/res18_best_encoder.pth"
-    [ecgfm_ked]="/home/irteam/ddn-opendata1/model/ECGFMs/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
-    [hubert_ecg]="/home/irteam/ddn-opendata1/model/ECGFMs/hubert_ecg/hubert_ecg_base.safetensors"
-    [ecg_fm]="/home/irteam/ddn-opendata1/model/ECGFMs/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
-    [cpc]="/home/irteam/ddn-opendata1/model/ECGFMs/cpc/last_11597276.ckpt"
+    [ecg_founder]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_founder/12_lead_ECGFounder.pth"
+    [ecg_jepa]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_jepa/multiblock_epoch100.pth"
+    [st_mem]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/st_mem/st_mem_vit_base_full.pth"
+    [merl]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/merl/res18_best_encoder.pth"
+    [ecgfm_ked]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
+    [hubert_ecg]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/hubert_ecg/hubert_ecg_base.safetensors"
+    [ecg_fm]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
+    [cpc]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/cpc/last_11597276.ckpt"
 )
 
 # 기본 실행 순서 (MODELS_OVERRIDE 미지정 시 사용)

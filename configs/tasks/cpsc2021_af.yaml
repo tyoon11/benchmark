@@ -4,9 +4,9 @@ task:
   num_classes: 3
 
 data:
-  h5_root: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0
-  table_csv: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0/ecg_table.csv
-  label_csv: /home/irteam/ddn-opendata1/h5/cpsc2021/v2.0/cpsc2021_labels.csv
+  h5_root: ${ECG_DATA_ROOT}/h5/cpsc2021/v2.0
+  table_csv: ${ECG_DATA_ROOT}/h5/cpsc2021/v2.0/ecg_table.csv
+  label_csv: ${ECG_DATA_ROOT}/h5/cpsc2021/v2.0/cpsc2021_labels.csv
   label_cols:
     - is_nonAF
     - is_persistentAF

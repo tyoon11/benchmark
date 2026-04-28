@@ -269,28 +269,63 @@ fold:
 
 ## 데이터 준비
 
-### Pretrained checkpoints
+데이터 / 체크포인트 경로는 task yaml 마다 흩어진 게 아니라 **환경변수 2개**로 한 번에 지정합니다.
+
+### 환경변수
+
+```bash
+# 1) ECG 데이터 root  (기본: /home/irteam/ddn-opendata1)
+export ECG_DATA_ROOT=/your/data/root
+
+# 2) 사전학습 checkpoint root  (기본: /home/irteam/ddn-opendata1/model/ECGFMs)
+export ECG_CKPT_ROOT=/your/ckpt/root
+```
+
+설정 안 하면 원래 서버의 절대경로로 default fallback (이 repo가 만들어진 환경 backward-compat). 다른 서버에서 clone한 경우 위 2개만 export하면 됩니다.
+
+### 디렉토리 구조 (env var 기준)
+
+```
+$ECG_DATA_ROOT/
+├── h5/
+│   ├── physionet/v2.0/      # PTB-XL, Chapman, CPSC2018, CPSC-Extra, Georgia, PTB
+│   ├── code15/v2.0/         # CODE-15%
+│   ├── sph/v2.0/            # SPH
+│   ├── ZZU-pECG/v2.0/       # ZZU pECG
+│   └── cpsc2021/v2.0/       # CPSC2021 (variant only)
+└── raw/physionet.org/files/echonext/1.1.0/    # EchoNext NumPy
+
+$ECG_CKPT_ROOT/
+├── ecg_founder/12_lead_ECGFounder.pth
+├── ecg_jepa/multiblock_epoch100.pth
+├── st_mem/st_mem_vit_base_full.pth
+├── merl/res18_best_encoder.pth
+├── ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt
+├── hubert_ecg/hubert_ecg_base.safetensors
+├── ecg_fm/mimic_iv_ecg_physionet_pretrained.pt
+└── cpc/last_11597276.ckpt
+```
+
+각 task yaml의 `h5_root`/`table_csv`/`metadata_csv`/`waveforms`는 `${ECG_DATA_ROOT}/...` 형태로 작성돼 있어 `run.py`가 자동 expand. 체크포인트 경로는 `configs/models.sh` + `run_parallel_tasks.sh`에서 `${ECG_CKPT_ROOT:-...}` 형태로 자동 expand.
+
+> **Note**: 디렉토리 구조 자체가 다르면 (예: H5가 `~/data/h5/...`처럼 다른 위치) `configs/tasks/*.yaml`의 `${ECG_DATA_ROOT}/h5/...` 부분을 본인 환경에 맞게 직접 수정하면 됩니다.
+
+### Pretrained checkpoints (다운로드 URL)
 
 | Model | URL |
 |---|---|
 | ECGFounder | https://huggingface.co/PKUDigitalHealth/ECGFounder |
 | ECG-JEPA (multiblock) | https://drive.google.com/file/d/1mh-XL0XOvvhFbhvuZ9c2KnTHa9B4F3Wx |
 | ST-MEM | https://drive.google.com/file/d/1E7J-A1HqWa2f08T6Sfk5uWk-_CFJhOYQ |
-| MERL | https://drive.google.com/drive/folders/13wb4DppUciMn-Y_qC2JRWTbZdz3xX0w2 |
+| MERL ResNet | https://drive.google.com/drive/folders/13wb4DppUciMn-Y_qC2JRWTbZdz3xX0w2 |
 | ECGFM-KED | https://zenodo.org/records/14881564 |
-| HuBERT-ECG | (paper repo) |
-| ECG-FM | paper의 `mimic_iv_ecg_physionet_pretrained.pt` |
-| CPC | paper [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) |
-
-다운로드 후 `configs/models.sh` + `run_parallel_tasks.sh` 의 `MODEL_CKPT_MAP` / `MODEL_CKPT` 경로를 본인 환경에 맞게 수정.
+| HuBERT-ECG / ECG-FM / CPC | paper [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) |
 
 ### ECG 데이터셋
 
-- **H5 데이터**: paper의 `convert_raw_to_h5` 파이프라인으로 변환된 표준 H5 (PTB-XL, CODE-15, Chapman 등). `ECG/metadata.fs` + `ECG/segments/<i>/signal` 구조.
-- **NumPy 데이터** (EchoNext): `(N, 1, T, C)` shape `.npy` + metadata CSV.
-- **라벨**: paper-canonical 라벨 정의가 [`labels/`](labels/) 안에 미리 들어있음 (csv + json).
-
-데이터 경로는 [`configs/tasks/<task>.yaml`](configs/tasks/) 의 `h5_root` 또는 `waveforms` 를 본인 환경에 맞게 수정.
+- **H5**: paper의 `convert_raw_to_h5` 파이프라인 결과 — `ECG/metadata.fs` + `ECG/segments/<i>/signal` 구조
+- **NumPy** (EchoNext): `(N, 1, T, C)` shape `.npy` + metadata CSV
+- **라벨**: paper-canonical 라벨 정의가 [`labels/`](labels/) 안에 미리 들어있음 (csv + json)
 
 ---
 

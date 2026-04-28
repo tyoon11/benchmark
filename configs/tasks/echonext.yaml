@@ -8,11 +8,11 @@ task:
 
 data:
   loader_type: echonext_numpy
-  metadata_csv: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/echonext_metadata_100k.csv
+  metadata_csv: ${ECG_DATA_ROOT}/raw/physionet.org/files/echonext/1.1.0/echonext_metadata_100k.csv
   waveforms:
-    train: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_train_waveforms.npy
-    val:   /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
-    test:  /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
+    train: ${ECG_DATA_ROOT}/raw/physionet.org/files/echonext/1.1.0/EchoNext_train_waveforms.npy
+    val:   ${ECG_DATA_ROOT}/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
+    test:  ${ECG_DATA_ROOT}/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
   label_cols:
     - lvef_lte_45_flag
     - lvwt_gte_13_flag

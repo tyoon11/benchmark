@@ -5,9 +5,9 @@ task:
   num_classes: 10
 
 data:
-  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
-  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ptbxl_table.csv
-  label_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/physionet_labels.csv
+  h5_root: ${ECG_DATA_ROOT}/h5/physionet/v2.0
+  table_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/ptbxl_table.csv
+  label_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/physionet_labels.csv
   label_cols:
     - is_NSR       # 18,092 (82.9%) Normal Sinus Rhythm
     - is_LAD       #  5,146 (23.6%) Left Axis Deviation
