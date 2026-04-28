@@ -16,23 +16,30 @@ benchmark/
 │   ├── default.yaml               # 기본 학습 설정
 │   ├── models.sh                  # 모델 레지스트리 (encoder_cls / checkpoint 경로)
 │   └── tasks/                     # 태스크별 데이터/라벨 설정
-│       ├── ptbxl_super.yaml
-│       ├── ptbxl_sub.yaml
-│       ├── ptbxl_diag.yaml
-│       ├── ptbxl_form.yaml
-│       ├── ptbxl_rhythm.yaml
-│       ├── chapman.yaml
-│       ├── chapman_rhythm.yaml
-│       ├── code15.yaml
-│       ├── cpsc2018.yaml
-│       ├── cpsc_extra.yaml
-│       ├── georgia.yaml
-│       ├── ningbo.yaml
-│       ├── ptb.yaml
-│       ├── zzu_pecg.yaml
-│       ├── echonext.yaml            # NumPy loader (EchoNext SHD)
-│       ├── echonext_multi.yaml      # NumPy loader (12-label multi)
-│       └── echonext_smoke.yaml      # NumPy loader (smoke test)
+│       ├── ptb.yaml                 # PTB
+│       ├── ptbxl_all.yaml           # PTB-XL (all 71 labels)
+│       ├── ptbxl_super.yaml         # PTB-XL super-class
+│       ├── ptbxl_sub.yaml           # PTB-XL sub-class
+│       ├── ptbxl_diag.yaml          # PTB-XL diagnostic
+│       ├── ptbxl_form.yaml          # PTB-XL form
+│       ├── ptbxl_rhythm.yaml        # PTB-XL rhythm
+│       ├── chapman.yaml             # Chapman (all)
+│       ├── chapman_rhythm.yaml      # Chapman (rhythm only)
+│       ├── code15.yaml              # CODE-15%
+│       ├── cpsc2018.yaml            # CPSC2018
+│       ├── cpsc_extra.yaml          # CPSC-Extra
+│       ├── georgia.yaml             # Georgia
+│       ├── ningbo.yaml              # Ningbo
+│       ├── sph_diag.yaml            # SPH (diagnostic)
+│       ├── zzu_pecg.yaml            # ZZU-pECG (pediatric)
+│       ├── echonext.yaml            # EchoNext SHD (NumPy loader)
+│       ├── echonext_multi.yaml      # EchoNext 12-label multi (NumPy loader)
+│       ├── echonext_smoke.yaml      # EchoNext smoke test (NumPy loader)
+│       ├── code15_diag.yaml         # variant: CODE-15 diagnostic
+│       ├── code15_diag_jepa.yaml    # variant: CODE-15 for ECG-JEPA spec
+│       ├── cpsc2021_af.yaml         # variant: CPSC2021 AF detection
+│       ├── physionet_all.yaml       # variant: PhysioNet (combined)
+│       └── ptbxl_super_jepa.yaml    # variant: PTB-XL super for ECG-JEPA spec
 ├── labels/                        # 태스크별 라벨 CSV/JSON (논문 동일 라벨셋)
 ├── scripts/
 │   ├── build_benchmark_labels.py  # 라벨 파이프라인
