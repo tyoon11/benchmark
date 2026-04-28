@@ -161,23 +161,31 @@ class CPCEncoder(nn.Module):
             _build_conv_block(512, 512, kernel_size=1, stride=1),  # layer 3
         )
 
-        # ── Predictor: S4 (try to load, optional) ──
+        # ── Predictor: S4 (paper의 S4Predictor wrapper와 동일 설정) ──
+        # 중요: d_input=None! 그래야 self.encoder=nn.Identity()가 되어 paper의
+        # S4Predictor(채널==model_dim → d_input=None) 와 정확히 일치.
+        # d_input=512 로 하면 랜덤 초기화된 Conv1d(512→512, k=1) 가 추가되어
+        # checkpoint에 없는 가중치로 feature가 corrupt 됨. (실측 CPC AUROC 0.78
+        # vs paper 0.88 — 이 한 줄 때문)
+        # 또한 encoder 출력을 (B,T,D) 로 transpose 후 넘기므로 transposed_input=False
+        # — paper의 RNNEncoder 가 이미 (B,T,D) 로 변환해서 S4Predictor 에 넘기는
+        # 흐름을 그대로 재현.
         try:
             from clinical_ts.ts.s4_modules.s4_model import S4Model
             self.predictor = S4Model(
-                d_input=512,
+                d_input=None,           # ← paper: channels==model_dim → None
                 d_model=512,
-                d_output=None,        # no output head
-                d_state=8,            # state_dim from config
+                d_output=None,
+                d_state=8,
                 n_layers=4,
                 dropout=0.2,
                 tie_dropout=True,
                 prenorm=False,
-                l_max=1200,             # matches checkpoint omega size: (1200//2)+1=601
-                transposed_input=True,  # input is (B, D, L)
+                l_max=1200,             # checkpoint omega shape (601,2) 기준
+                transposed_input=False, # ← paper와 동일; we'll feed (B,T,D)
                 bidirectional=False,    # causal=True
-                layer_norm=True,        # not batchnorm
-                pooling=False,          # keep sequence
+                layer_norm=True,        # batchnorm=False
+                pooling=False,
                 backbone="s42",
             )
             self._has_predictor = True
@@ -236,29 +244,34 @@ class CPCEncoder(nn.Module):
         print(f"[CPCEncoder] Loaded from {path} (epoch={ckpt.get('epoch', '?')})")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)"""
+        """x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
+
+        Paper의 forward 흐름과 동일하게 맞춤:
+          encoder (B,12,T) → (B,512,T')
+          → transpose to (B,T',512)  (paper RNNEncoder가 마지막에 transpose하는 것 동일)
+          → S4Predictor wrapper (transposed_input=False)
+          → S4Model: 입력 (B,T',512) → 출력 (B,T',512)
+          → pooling (B, 512)
+        """
         x = torch.nan_to_num(x)
         if x.shape[-1] != self.model_seq_len:
             x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
         # Encoder: (B, 12, 600) → (B, 512, T')
-        enc_out = self.encoder(x)  # (B, 512, T')
+        enc_out = self.encoder(x)
+        # Paper의 RNNEncoder가 마지막에 transpose해서 (B, T', 512) 반환 → S4Predictor 입력.
+        seq = enc_out.transpose(1, 2)  # (B, T', 512)
 
         if self._has_predictor and self.predictor is not None:
             try:
-                pred_out = self.predictor(enc_out)
-                seq = pred_out.transpose(1, 2)
+                seq = self.predictor(seq)  # transposed_input=False → in/out (B, T', 512)
             except Exception as e:
                 if not getattr(CPCEncoder, "_s4_warned", False):
                     import traceback
                     print(f"[CPCEncoder] S4 forward 실패 → encoder-only fallback: {type(e).__name__}: {e}")
                     traceback.print_exc()
-                    print(f"[CPCEncoder] enc_out shape: {enc_out.shape}, dtype: {enc_out.dtype}, device: {enc_out.device}")
                     CPCEncoder._s4_warned = True
                 self._has_predictor = False
-                seq = enc_out.transpose(1, 2)
-        else:
-            seq = enc_out.transpose(1, 2)
 
         pooled = seq.mean(dim=1)  # (B, 512)
         return seq, pooled
