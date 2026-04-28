@@ -27,7 +27,7 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 mkdir -p results
 
-# 태스크 목록 (논문 벤치마크 순서)
+# 태스크 목록 (논문 벤치마크 17개 — run_full_benchmark.sh와 동일)
 TASKS=(
     # Adult ECG interpretation
     ptb
@@ -36,14 +36,19 @@ TASKS=(
     cpsc_extra
     georgia
     chapman
+    chapman_rhythm
     code15
     ptbxl_all
     ptbxl_super
     ptbxl_diag
     ptbxl_sub
+    ptbxl_form
+    ptbxl_rhythm
     sph_diag
     # Pediatric ECG interpretation
     zzu_pecg
+    # Cardiac structure & function (NumPy loader)
+    echonext
 )
 
 # ─────────────────────────────────────────────────────────────

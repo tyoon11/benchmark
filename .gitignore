@@ -4,3 +4,7 @@ results/
 *.pt
 *.pth
 *.log
+.claude/
+.DS_Store
+.vscode/
+.idea/
