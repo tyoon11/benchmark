@@ -107,8 +107,24 @@ class DummyEncoder(torch.nn.Module):
 # ═══════════════════════════════════════════════════════════════
 # Config 로딩
 # ═══════════════════════════════════════════════════════════════
+def _expand_env_vars(value):
+    """Recursively expand ${VAR} and $VAR references in str values inside cfg."""
+    if isinstance(value, str):
+        return os.path.expandvars(value)
+    if isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env_vars(v) for v in value]
+    return value
+
+
 def load_config(task_name: str, overrides: dict = None) -> dict:
     cfg_dir = SCRIPT_DIR / "configs"
+
+    # ECG_DATA_ROOT 가 unset이면 원래 서버 경로로 default — 기존 사용자 backward-compat.
+    # 다른 환경에선 `export ECG_DATA_ROOT=/your/data/root` 로 override.
+    os.environ.setdefault("ECG_DATA_ROOT", "/home/irteam/ddn-opendata1")
+
     default_path = cfg_dir / "default.yaml"
     with open(default_path) as f:
         cfg = yaml.safe_load(f)
@@ -131,8 +147,10 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
                 d = d.setdefault(p, {})
             d[parts[-1]] = v
 
-    # 상대경로 resolve: 태스크 yaml에 'labels/xxx.csv' 처럼 적힌 항목은
-    # repo root (SCRIPT_DIR) 기준 절대경로로 변환. 절대경로면 그대로.
+    # 1) ${VAR} env var expansion (e.g., ${ECG_DATA_ROOT}/h5/...).
+    cfg = _expand_env_vars(cfg)
+
+    # 2) 상대경로 resolve — repo 안의 라벨파일 등 ('labels/x.csv'은 SCRIPT_DIR 기준).
     data_section = cfg.get("data", {})
     for key in ("label_csv", "table_csv", "h5_root", "metadata_csv"):
         v = data_section.get(key)

@@ -1,11 +1,11 @@
 # ningbo (67-class multi-label, paper)
 data:
   batch_size: 64
-  h5_root: /home/irteam/ddn-opendata1/h5/physionet/v2.0
+  h5_root: ${ECG_DATA_ROOT}/h5/physionet/v2.0
   label_csv: labels/ningbo_paper_labels.csv
   normalize: false
   num_workers: 8
-  table_csv: /home/irteam/ddn-opendata1/h5/physionet/v2.0/ningbo_table.csv
+  table_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/ningbo_table.csv
   target_fs: 500
   target_length: 5000
 task:

@@ -1,11 +1,11 @@
 # zzu_pecg (58-class multi-label, paper AHA_description)
 data:
   batch_size: 64
-  h5_root: /home/irteam/ddn-opendata1/h5/ZZU-pECG/v2.0
+  h5_root: ${ECG_DATA_ROOT}/h5/ZZU-pECG/v2.0
   label_csv: labels/zzu_paper_labels.csv
   normalize: false
   num_workers: 8
-  table_csv: /home/irteam/ddn-opendata1/h5/ZZU-pECG/v2.0/ecg_table.csv
+  table_csv: ${ECG_DATA_ROOT}/h5/ZZU-pECG/v2.0/ecg_table.csv
   target_fs: 500
   target_length: 5000
 task:
