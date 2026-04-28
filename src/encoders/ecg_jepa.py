@@ -1,7 +1,8 @@
 """
 ECG-JEPA Encoder Adapter for Benchmark
 ========================================
-ecg_jepa 프로젝트의 MaskTransformer를 벤치마크 인터페이스로 래핑합니다.
+paper's clinical_ts (ecg-fm-benchmarking) 의 MaskTransformer를 벤치마크
+인터페이스로 래핑합니다.
 
 사용:
   python run.py --task ptbxl_super --eval_mode linear_probe \
@@ -16,13 +17,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 
-# 외부 ecg_jepa 코드베이스 (MaskTransformer 정의). 환경별로 다르면
-# `export ECG_JEPA_DIR=/path/to/ecg_jepa` 로 override.
-ECG_JEPA_ROOT = Path(os.environ.get(
-    "ECG_JEPA_DIR",
-    "/home/irteam/local-node-d/tykim/ecg_jepa",
+# 외부 paper repo (clinical_ts 패키지). 환경별로 다르면
+# `export ECG_FM_BENCH_DIR=/path/to/ecg-fm-benchmarking/code` 로 override.
+ECG_FM_BENCH = Path(os.environ.get(
+    "ECG_FM_BENCH_DIR",
+    "/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code",
 ))
-sys.path.insert(0, str(ECG_JEPA_ROOT))
+sys.path.insert(0, str(ECG_FM_BENCH))
 
 
 class ECGJEPAEncoder(nn.Module):
@@ -60,7 +61,7 @@ class ECGJEPAEncoder(nn.Module):
         checkpoint: str = None,
     ):
         super().__init__()
-        from models.ecg_jepa.model import MaskTransformer
+        from clinical_ts.models.ecg_foundation_models.ecg_jepa.ecg_jepa import MaskTransformer
 
         self.feature_dim = embed_dim
         self.embed_dim = embed_dim

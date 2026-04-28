@@ -27,8 +27,10 @@ tqdm
 # clinical_ts (ecg-fm-benchmarking/code) 가 transitively 요구하는 라이브러리들.
 # 한 번이라도 인코더 import 하면 필요해진다.
 einops                  # ST-MEM, S4 modules의 rearrange/repeat
+timm                    # ECG-JEPA의 DropPath
 pytorch-lightning       # CPC S4Model이 LightningModule 상속
 omegaconf               # CPC checkpoint pickle이 OmegaConf 타입 포함
 hydra-core              # CPC load_model_from_config (선택; 직접 weight 로드 시 불필요)
 fastcore                # ECGFM-KED의 fastcore.foundation 사용
 safetensors             # HuBERT-ECG checkpoint 포맷
+transformers            # HuBERT-ECG의 HuBERT backbone

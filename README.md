@@ -19,19 +19,19 @@ pip install -r requirements.txt
 
 ### 2. 외부 코드 의존성 (인코더 backbone)
 
+paper의 `clinical_ts` 패키지 하나만 필요. 8개 인코더 모두 거기서 backbone을 가져옴 (ECG-JEPA의 MaskTransformer도 paper의 자체 복사본 사용).
+
 | 외부 repo | 어떤 인코더에 필요? | 환경변수 | 기본 경로 |
 |---|---|---|---|
-| [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) (`code/clinical_ts/`) | ECGFounder, ST-MEM, CPC, MERL, ECGFM-KED, HuBERT-ECG | `ECG_FM_BENCH_DIR` | `/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code` |
-| [`ecg_jepa`](https://github.com/sehunfromdaegu/ECG_JEPA) | ECG-JEPA만 | `ECG_JEPA_DIR` | `/home/irteam/local-node-d/tykim/ecg_jepa` |
+| [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) (`code/clinical_ts/`) | ECGFounder, ECG-JEPA, ST-MEM, CPC, MERL, ECGFM-KED, HuBERT-ECG | `ECG_FM_BENCH_DIR` | `/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code` |
 
 기본 경로(`/home/irteam/...`)와 다른 곳에 두면 환경변수로 override:
 
 ```bash
 export ECG_FM_BENCH_DIR=/your/path/to/ecg-fm-benchmarking/code
-export ECG_JEPA_DIR=/your/path/to/ecg_jepa
 ```
 
-(ECG-FM 인코더는 이 repo에 self-contained라 외부 repo 불필요)
+(ECG-FM 인코더는 이 repo에 self-contained라 외부 backbone 불필요)
 
 ### 3. 사전학습 체크포인트
 
