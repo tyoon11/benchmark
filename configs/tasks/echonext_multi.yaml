@@ -1,0 +1,38 @@
+# EchoNext — Multi-label (11개 echo-derived binary flags + composite SHD)
+# 모든 binary flag를 동시에 학습.
+task:
+  name: echonext_multi
+  num_classes: 12
+
+data:
+  loader_type: echonext_numpy
+  metadata_csv: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/echonext_metadata_100k.csv
+  waveforms:
+    train: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_train_waveforms.npy
+    val:   /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
+    test:  /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
+  label_cols:
+    - lvef_lte_45_flag
+    - lvwt_gte_13_flag
+    - aortic_stenosis_moderate_or_greater_flag
+    - aortic_regurgitation_moderate_or_greater_flag
+    - mitral_regurgitation_moderate_or_greater_flag
+    - tricuspid_regurgitation_moderate_or_greater_flag
+    - pulmonary_regurgitation_moderate_or_greater_flag
+    - rv_systolic_dysfunction_moderate_or_greater_flag
+    - pericardial_effusion_moderate_large_flag
+    - pasp_gte_45_flag
+    - tr_max_gte_32_flag
+    - shd_moderate_or_greater_flag
+  split_col: split
+  source_fs: 250
+  target_fs: 250
+  target_length: 2500
+  normalize: false
+  layout: NHWC
+  n_leads: 12
+  batch_size: 64
+  num_workers: 8
+
+fold:
+  auto_split: false

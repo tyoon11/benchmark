@@ -1,5 +1,6 @@
 {
-  "dataset": "zzu_pecg",
+  "dataset": "zzu",
+  "source_col": "aha_description",
   "n_labels": 58,
   "labels": {
     "2_1_AV_block": "2:1 AV block",

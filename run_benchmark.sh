@@ -41,6 +41,7 @@ TASKS=(
     ptbxl_super
     ptbxl_diag
     ptbxl_sub
+    sph_diag
     # Pediatric ECG interpretation
     zzu_pecg
 )

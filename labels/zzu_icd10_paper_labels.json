@@ -1,0 +1,26 @@
+{
+  "dataset": "zzu_icd10",
+  "source_col": "icd10_disease_category",
+  "n_labels": 19,
+  "labels": {
+    "Acute_myocarditis": "Acute myocarditis",
+    "Atrial_septal_defect": "Atrial septal defect",
+    "Atrial_septal_defect_Foramen_ovale": "Atrial septal defect (Foramen ovale)",
+    "Atrial_septal_defect_Ostium_secundum_defect_": "Atrial septal defect (Ostium secundum defect )",
+    "Atrioventricular_septal_defect": "Atrioventricular septal defect",
+    "Cardiomyopathy": "Cardiomyopathy",
+    "Dilated_cardiomyopathy": "Dilated cardiomyopathy",
+    "Fulminant_myocarditis": "Fulminant myocarditis",
+    "Hypertrophic_cardiomyopathy": "Hypertrophic cardiomyopathy",
+    "Kawasaki_disease": "Kawasaki disease",
+    "Myocarditis": "Myocarditis",
+    "Noncompaction_of_the_ventricular_myocardium": "Noncompaction of the ventricular myocardium",
+    "Patent_ductus_arteriosus": "Patent ductus arteriosus",
+    "Pulmonary_valve_stenosis": "Pulmonary valve stenosis",
+    "Stenosis_of_pulmonary_artery": "Stenosis of pulmonary artery",
+    "Stenosis_of_right_ventricular_outflow_tract": "Stenosis of right ventricular outflow tract",
+    "Tetralogy_of_Fallot": "Tetralogy of Fallot",
+    "Ventricular_septal_defect": "Ventricular septal defect",
+    "Viral_myocarditis": "Viral myocarditis"
+  }
+}

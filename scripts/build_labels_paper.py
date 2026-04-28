@@ -256,52 +256,138 @@ def build_ptbxl_dataset():
 
 
 # ═══════════════════════════════════════════════════════════════
-# ZZU — 원본 prepare_data_zzu_pecg() 유사 (AHA/CHN 코드 기반)
+# ZZU — 원본 prepare_data_zzu_pecg() 재현 (AHA/CHN/ICD-10 description 매핑)
 # ═══════════════════════════════════════════════════════════════
+ZZU_LABEL_COLS = ["icd10_disease_category", "aha_description", "chn_description"]
+
+
 def build_zzu_dataset():
     """
-    ZZU: raw AttributesDictionary.csv의 AHA_code + CHN_code → label 리스트.
-    논문의 prepare_data_zzu_pecg와 동일.
-    """
-    attr_csv = Path("/home/irteam/ddn-opendata1/raw/ZZU-pECG/AttributesDictionary.csv")
-    df_attr = pd.read_csv(attr_csv)
+    원본 ecg_utils.prepare_data_zzu_pecg() 재현.
 
-    # Filename과 H5 filepath 매핑
-    h5_table = pd.read_csv(H5_ROOT / "ZZU-pECG/v2.0/ecg_table.csv")
-    # H5의 pid가 attr의 Patient_ID, rid가 attr 내 인덱스
-    # 가장 쉬운 건 attr에 H5 filepath 직접 붙이기
-    # attr의 Filename (예: "P00001_E01") → H5 file에는 어떻게?
-    # convert_to_h5에서 prefix=zzu, pid=Patient_ID, rid=attr row index 순서로 저장됨
-    # file_name.csv를 보자
+    - AttributesDictionary.csv: 샘플 메타(Patient_ID, Lead, AHA_code, CHN_code, ICD-10)
+    - DiseaseCode.csv:          ICD-10 → (disease type, disease category)
+    - ECGCode.csv:              AHA/CHN code → description
+
+    Lead==12 필터, 세 라벨 컬럼 모두 map_and_filter_labels(min_cnt=10) 적용.
+    """
+    raw_root = Path("/home/irteam/ddn-opendata1/raw/ZZU-pECG")
+    df = pd.read_csv(raw_root / "AttributesDictionary.csv")
+    df_disease = pd.read_csv(raw_root / "DiseaseCode.csv")
+    df_ecg = pd.read_csv(raw_root / "ECGCode.csv")
+
+    df.columns = df.columns.str.lower()
+    df_disease.columns = df_disease.columns.str.lower()
+    df_ecg.columns = df_ecg.columns.str.lower()
+
+    # code list 파싱 (원본 동일)
+    for col in ["aha_code", "chn_code", "icd-10 code"]:
+        df[col] = df[col].apply(
+            lambda x: [] if pd.isna(x) or x == "Null"
+            else [c.strip().replace("'", "") for c in str(x).split(";") if c.strip()]
+        )
+
+    # ICD-10 → disease type / category
+    type_map, cat_map = {}, {}
+    for _, row in df_disease.iterrows():
+        for code in str(row["icd-10 code"]).split(";"):
+            code = code.strip()
+            if code:
+                type_map[code] = row["disease type"]
+                cat_map[code] = row["disease category"]
+
+    df["icd10_disease_type"] = df["icd-10 code"].apply(
+        lambda codes: [type_map[c] for c in codes if c in type_map]
+    )
+    df["icd10_disease_category"] = df["icd-10 code"].apply(
+        lambda codes: [cat_map[c] for c in codes if c in cat_map]
+    )
+
+    # AHA/CHN code → description (원본: ECGCode.csv)
+    aha_map, chn_map = {}, {}
+    for _, row in df_ecg.iterrows():
+        desc = str(row["description"]).strip()
+        aha = str(row["aha(category&code)"]).strip()
+        chn = str(row["chn(category&code)"]).strip()
+        if aha not in ["N/A", "nan"]:
+            aha_map[aha] = desc
+        if chn not in ["N/A", "nan"]:
+            chn_map[chn] = desc
+
+    df["aha_description"] = df["aha_code"].apply(
+        lambda codes: [aha_map[c] for c in codes if c in aha_map]
+    )
+    df["chn_description"] = df["chn_code"].apply(
+        lambda codes: [chn_map[c] for c in codes if c in chn_map]
+    )
+
+    # Lead==12 필터 (원본 동일)
+    n_all = len(df)
+    df = df[df["lead"] == 12].copy()
+    logging.info(f"  ZZU 12-lead 필터: {len(df)}/{n_all}")
+
+    # H5 filepath 매핑
     fn_csv = H5_ROOT / "ZZU-pECG/v2.0/file_name.csv"
     fn_df = pd.read_csv(fn_csv)
-    # original_filename → h5_filepath
     orig_to_h5 = dict(zip(fn_df["original_filename"].astype(str),
                           fn_df["h5_filepath"].astype(str)))
 
-    # AHA_code와 CHN_code를 합쳐서 label 리스트로
-    def parse_codes(row):
-        labels = []
-        for col in ["AHA_code", "CHN_code"]:
-            val = row.get(col)
-            if pd.isna(val): continue
-            for part in str(val).split(";"):
-                p = part.strip().strip("'")
-                if p:
-                    labels.append(p)
-        return labels
-
-    df_attr["label"] = df_attr.apply(parse_codes, axis=1)
-
-    # filepath 매핑
-    df_attr["filepath"] = df_attr["Filename"].apply(
+    df["filepath"] = df["filename"].apply(
         lambda x: orig_to_h5.get(str(x).split("/")[-1], None)
     )
-    df = df_attr[df_attr["filepath"].notna()].copy()
-    logging.info(f"  ZZU records: {len(df)}/{len(df_attr)}")
+    df = df[df["filepath"].notna()].copy()
+    logging.info(f"  ZZU H5 매핑 후: {len(df)}")
 
-    df, lbl_itos = map_and_filter_labels(df, min_cnt=MIN_CNT, lbl_cols=["label"])
-    return df, lbl_itos["label_filtered"]
+    # 세 라벨 컬럼 모두 필터링 (원본 동일)
+    df, lbl_itos = map_and_filter_labels(df, min_cnt=MIN_CNT, lbl_cols=ZZU_LABEL_COLS)
+    for col in ZZU_LABEL_COLS:
+        logging.info(f"  {col}: {len(lbl_itos[col + '_filtered'])} labels (≥{MIN_CNT})")
+    return df, lbl_itos
+
+
+def save_zzu_subtasks(df, lbl_itos):
+    """
+    ZZU 3개 서브태스크 저장.
+      - zzu_paper_labels.csv              (aha_description, 기본 — yaml과 일치)
+      - zzu_icd10_paper_labels.csv        (icd10_disease_category)
+      - zzu_chn_paper_labels.csv          (chn_description)
+    """
+    subtask_to_filename = {
+        "aha_description":        "zzu",
+        "icd10_disease_category": "zzu_icd10",
+        "chn_description":        "zzu_chn",
+    }
+
+    for task_col, out_name in subtask_to_filename.items():
+        labels_list = list(lbl_itos[task_col + "_filtered"])
+        numeric_col = task_col + "_filtered_numeric"
+
+        label_cols = []
+        for lbl in labels_list:
+            col = str(lbl).replace(" ", "_").replace(",", "").replace("-", "_") \
+                          .replace("(", "").replace(")", "").replace("'", "") \
+                          .replace("/", "_").replace(":", "_")
+            label_cols.append(col)
+
+        out_df = df[["filepath"]].copy()
+        for j, col in enumerate(label_cols):
+            out_df[col] = df[numeric_col].apply(
+                lambda x: j in x if isinstance(x, list) else False
+            )
+
+        out_csv = OUT_DIR / f"{out_name}_paper_labels.csv"
+        out_df.to_csv(out_csv, index=False)
+
+        out_json = OUT_DIR / f"{out_name}_paper_labels.json"
+        with open(out_json, "w") as f:
+            json.dump({
+                "dataset": out_name,
+                "source_col": task_col,
+                "n_labels": len(labels_list),
+                "labels": {col: str(lbl) for col, lbl in zip(label_cols, labels_list)},
+            }, f, indent=2, ensure_ascii=False)
+
+        logging.info(f"  Saved: {out_csv.name} ({len(out_df)} rows, {len(label_cols)} labels)")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -434,8 +520,8 @@ def main():
             df, lbl_itos = build_ptbxl_dataset()
             save_ptbxl_subtasks(df, lbl_itos)
         elif ds == "zzu":
-            df, labels_itos = build_zzu_dataset()
-            save_label_csv("zzu", df, labels_itos)
+            df, lbl_itos = build_zzu_dataset()
+            save_zzu_subtasks(df, lbl_itos)
         elif ds == "code15":
             copy_code15_labels()
 
