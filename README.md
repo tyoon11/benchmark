@@ -29,7 +29,10 @@ benchmark/
 │       ├── georgia.yaml
 │       ├── ningbo.yaml
 │       ├── ptb.yaml
-│       └── zzu_pecg.yaml
+│       ├── zzu_pecg.yaml
+│       ├── echonext.yaml            # NumPy loader (EchoNext SHD)
+│       ├── echonext_multi.yaml      # NumPy loader (12-label multi)
+│       └── echonext_smoke.yaml      # NumPy loader (smoke test)
 ├── labels/                        # 태스크별 라벨 CSV/JSON (논문 동일 라벨셋)
 ├── scripts/
 │   ├── build_benchmark_labels.py  # 라벨 파이프라인
@@ -358,19 +361,6 @@ H5 경로와 동일하게 **chunk_length + ecg_id + random_crop** 모두 지원 
 - `echonext.yaml` (= `echonext_shd`) — `shd_moderate_or_greater_flag` 단일 binary (양성률 ≈ 52% train / 43% val·test)
 - `echonext_multi.yaml` — 12개 binary 라벨 동시 학습 (각 valve 중등도 이상 + LVEF/LVWT/PASP/TR 등 + composite SHD)
 - `echonext_smoke.yaml` — train 자리에 val을 임시 매핑한 동작 검증용 (train .npy download 진행 중일 때)
-
-### 인코더별 EchoNext chunk 동작 (target_length=2500 @ 250Hz)
-
-| Model | chunk_length | n_chunks/ECG |
-|---|:-:|:-:|
-| ECGFounder | 625 | 4 |
-| ECG-JEPA | 2500 | 1 (full) |
-| ST-MEM | 600 | 4 |
-| CPC | 625 | 4 |
-| MERL ResNet | 625 | 4 |
-| ECGFM-KED | 2500 | 1 (full) |
-| HuBERT-ECG | 1250 | 2 |
-| ECG-FM | 1250 | 2 |
 
 ### 사용법
 
