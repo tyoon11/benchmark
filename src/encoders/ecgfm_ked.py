@@ -7,7 +7,6 @@ Benchmark fs (run.sh): fs_model=500, input_size=10s → 5000 samples
 Embedding dimension: 768
 """
 
-import os
 import sys
 import types
 import enum
@@ -20,11 +19,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 
-ECG_FM_BENCH = Path(os.environ.get(
-    "ECG_FM_BENCH_DIR",
-    "/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code",
-))
-sys.path.insert(0, str(ECG_FM_BENCH))
+# clinical_ts subset is bundled under benchmark/src/external/
+EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
+sys.path.insert(0, str(EXTERNAL_DIR))
 
 # fastai v1 compatibility shim: ecgfm_ked.py uses `from fastai.core import *`
 # which expects typing names, Enum, Floats, etc.
