@@ -5,7 +5,6 @@ Model sampling frequency: 500 Hz (with bandpass preprocessing)
 Embedding dimension: 768
 """
 
-import os
 import sys
 import numpy as np
 import torch
@@ -13,11 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 
-ECG_FM_BENCH = Path(os.environ.get(
-    "ECG_FM_BENCH_DIR",
-    "/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code",
-))
-sys.path.insert(0, str(ECG_FM_BENCH))
+# clinical_ts subset is bundled under benchmark/src/external/
+EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
+sys.path.insert(0, str(EXTERNAL_DIR))
 
 
 class HuBERTECGEncoder(nn.Module):

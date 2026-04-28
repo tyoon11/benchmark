@@ -17,21 +17,15 @@ cd benchmark
 pip install -r requirements.txt
 ```
 
-### 2. 외부 코드 의존성 (인코더 backbone)
+### 2. 외부 코드 의존성
 
-paper의 `clinical_ts` 패키지 하나만 필요. 8개 인코더 모두 거기서 backbone을 가져옴 (ECG-JEPA의 MaskTransformer도 paper의 자체 복사본 사용).
+**없음** — 필요한 paper 코드 (`clinical_ts` subset) 가 [`src/external/clinical_ts/`](src/external/clinical_ts/) 안에 bundled 되어 있어서 외부 repo clone 불필요. `src/encoders/` 의 모든 adapter 가 이 로컬 복사본을 import.
 
-| 외부 repo | 어떤 인코더에 필요? | 환경변수 | 기본 경로 |
-|---|---|---|---|
-| [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) (`code/clinical_ts/`) | ECGFounder, ECG-JEPA, ST-MEM, CPC, MERL, ECGFM-KED, HuBERT-ECG | `ECG_FM_BENCH_DIR` | `/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code` |
+bundled 항목:
+- `models/ecg_foundation_models/{ecg_founder, ecg_jepa, st_mem, merl, ecgfm_ked, hubert_ecg}` — 7개 인코더 backbone
+- `ts/s4_modules/` — CPC의 S4 predictor
 
-기본 경로(`/home/irteam/...`)와 다른 곳에 두면 환경변수로 override:
-
-```bash
-export ECG_FM_BENCH_DIR=/your/path/to/ecg-fm-benchmarking/code
-```
-
-(ECG-FM 인코더는 이 repo에 self-contained라 외부 backbone 불필요)
+(ECG-FM 인코더는 `src/encoders/ecg_fm.py` 자체에 self-contained 구현)
 
 ### 3. 사전학습 체크포인트
 

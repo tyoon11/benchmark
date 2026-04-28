@@ -6,20 +6,15 @@ Model sampling frequency: 500 Hz
 Embedding dimension: 1024
 """
 
-import os
 import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 
-# 외부 paper repo (clinical_ts 패키지 위치). 환경별로 다르면
-# `export ECG_FM_BENCH_DIR=/path/to/ecg-fm-benchmarking/code` 로 override.
-ECG_FM_BENCH = Path(os.environ.get(
-    "ECG_FM_BENCH_DIR",
-    "/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code",
-))
-sys.path.insert(0, str(ECG_FM_BENCH))
+# clinical_ts subset is bundled under benchmark/src/external/
+EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
+sys.path.insert(0, str(EXTERNAL_DIR))
 
 
 class ECGFounderEncoder(nn.Module):
