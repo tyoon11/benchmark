@@ -76,7 +76,7 @@ N_GPUS=${#GPU_IDS[@]}
 if [ -n "$TASKS_OVERRIDE" ]; then
     TASKS=($TASKS_OVERRIDE)
 else
-    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm zzu_pecg)
+    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm sph_diag zzu_pecg echonext)
 fi
 
 # ─────────────────────────────────────────────────────────────

@@ -1,0 +1,30 @@
+# EchoNext smoke test — train 파일이 download 완료될 때까지 임시로 val 사용
+# 프레임워크 동작 검증 전용. 실제 학습에는 echonext.yaml 사용할 것.
+task:
+  name: echonext_smoke
+  num_classes: 1
+
+data:
+  loader_type: echonext_numpy
+  metadata_csv: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/echonext_metadata_100k.csv
+  waveforms:
+    train: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
+    val:   /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
+    test:  /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
+  # train의 split 컬럼은 'val'로 필터해야 길이가 맞음 (smoke 전용)
+  split_overrides:
+    train: val
+  label_cols:
+    - shd_moderate_or_greater_flag
+  split_col: split
+  source_fs: 250
+  target_fs: 250
+  target_length: 2500
+  normalize: false
+  layout: NHWC
+  n_leads: 12
+  batch_size: 32
+  num_workers: 4
+
+fold:
+  auto_split: false

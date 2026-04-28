@@ -59,6 +59,8 @@ DATASETS = {
     "code15":       {"table": H5_ROOT / "code15/v2.0/code15_table.csv",          "label": LABEL_DIR / "code15_paper_labels.csv",       "n_folds": 10, "method": "patient"},
     # zzu: 파일 기반
     "zzu_pecg":     {"table": H5_ROOT / "ZZU-pECG/v2.0/ecg_table.csv",          "label": LABEL_DIR / "zzu_paper_labels.csv",          "n_folds": 10, "method": "label"},
+    # sph: 환자 기반 (prepare_data_sph와 동일: stratified 10-fold by patient_id)
+    "sph":          {"table": H5_ROOT / "sph/v2.0/sph_table.csv",               "label": LABEL_DIR / "sph_paper_labels.csv",          "n_folds": 10, "method": "patient"},
 }
 
 

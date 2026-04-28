@@ -237,7 +237,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     if args.all:
-        targets = list(SNOMED_DATASETS.keys()) + ["zzu", "code15", "cpsc2021"]
+        targets = list(SNOMED_DATASETS.keys()) + ["zzu", "code15", "cpsc2021", "sph"]
     elif args.dataset:
         targets = [args.dataset]
     else:
@@ -301,6 +301,28 @@ def main():
                 dst = out_dir / "cpsc2021_bench_labels.csv"
                 shutil.copy(src, dst)
                 logging.info(f"  저장: {dst.name} (3 라벨)")
+
+        elif ds == "sph":
+            # SPH: convert_h5의 sph_labels.csv를 그대로 paper/bench 양쪽에 복사.
+            # convert_h5/append_labels.py의 map_sph가 ecg-fm-benchmarking
+            # map_and_filter_labels(min_cnt=10)와 동일한 35개 primary AHA 코드를 사용.
+            src = H5_ROOT / "sph/v2.0/sph_labels.csv"
+            if src.exists():
+                df = pd.read_csv(src, low_memory=False)
+                key = {"filepath","dataset","pid","rid","oid"}
+                label_cols = [c for c in df.columns if c not in key]
+                # 벤치마크 로더는 filepath + 라벨 컬럼만 요구
+                paper_df = df[["filepath"] + label_cols]
+                for suffix in ("paper", "bench"):
+                    dst = out_dir / f"sph_{suffix}_labels.csv"
+                    paper_df.to_csv(dst, index=False)
+                    json_p = out_dir / f"sph_{suffix}_labels.json"
+                    with open(json_p, "w") as f:
+                        json.dump({"dataset": "sph", "n_labels": len(label_cols),
+                                   "labels": label_cols}, f, indent=2, ensure_ascii=False)
+                    logging.info(f"  저장: {dst.name} ({len(paper_df):,}행, {len(label_cols)} 라벨)")
+            else:
+                logging.error(f"  원본 라벨 없음: {src} (먼저 append_labels.py --dataset sph)")
 
     logging.info(f"\n완료! 라벨 디렉토리: {out_dir}")
 

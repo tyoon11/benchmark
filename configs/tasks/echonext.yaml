@@ -1,0 +1,28 @@
+# EchoNext — Structural Heart Disease (SHD) detection (단일 binary)
+# ecg-fm-benchmarking 원본 echonext task와 동일하게 250Hz × 10초 = 2500 samples 사용
+task:
+  name: echonext_shd
+  num_classes: 1
+
+data:
+  loader_type: echonext_numpy
+  metadata_csv: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/echonext_metadata_100k.csv
+  waveforms:
+    train: /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_train_waveforms.npy
+    val:   /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
+    test:  /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
+  label_cols:
+    - shd_moderate_or_greater_flag
+  split_col: split
+  source_fs: 250
+  target_fs: 250
+  target_length: 2500          # 250Hz × 10s
+  normalize: false             # 데이터셋 자체가 이미 z-score 정규화됨
+  layout: NHWC                 # (N, 1, T, C)
+  n_leads: 12
+  batch_size: 64
+  num_workers: 8
+
+# strat_fold가 없으므로 auto_split 비활성
+fold:
+  auto_split: false
