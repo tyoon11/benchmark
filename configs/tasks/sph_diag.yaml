@@ -3,7 +3,7 @@
 data:
   batch_size: 64
   h5_root: /home/irteam/ddn-opendata1/h5/sph/v2.0
-  label_csv: /home/irteam/local-node-d/tykim/benchmark/labels/sph_paper_labels.csv
+  label_csv: labels/sph_paper_labels.csv
   normalize: false
   num_workers: 8
   table_csv: /home/irteam/ddn-opendata1/h5/sph/v2.0/sph_table.csv
