@@ -39,6 +39,10 @@ class H5ECGDataset(Dataset):
         label_cols:     사용할 라벨 컬럼 목록 (None이면 label_csv의 모든 non-key 컬럼)
         target_fs:      모델이 기대하는 샘플링 주파수 (None이면 리샘플링 안 함)
         target_length:  모델이 기대하는 시계열 길이 (샘플 수, None이면 조정 안 함)
+        chunk_length:   인코더가 한 번에 보는 window 크기 (target_fs 기준 샘플 수).
+                        설정되면 ECG 1개를 ⌊target_length / chunk_length⌋ 개의
+                        non-overlapping chunk로 확장 (paper §3.3 multi-window).
+                        None이면 전체 ECG 1개를 그대로 반환.
         seg_idx:        사용할 세그먼트 인덱스 (None이면 seg0만, 'all'이면 모든 세그먼트)
         normalize:      True면 per-lead z-score (dataset mean/std)
         fold_col:       fold 컬럼명
@@ -55,6 +59,7 @@ class H5ECGDataset(Dataset):
         label_cols:    list = None,
         target_fs:     int = None,
         target_length: int = None,
+        chunk_length:  int = None,
         seg_idx:       str = None,  # None(=0), 'all', or int
         normalize:     bool = False,
         fold_col:      str = None,
@@ -103,6 +108,25 @@ class H5ECGDataset(Dataset):
         else:
             self.seg_indices = [int(seg_idx) if seg_idx is not None else 0] * len(self.table)
 
+        # ── Chunk 확장 (paper §3.3 multi-window train + test-time aggregation) ──
+        # chunk_length가 target_length보다 작으면 ECG 1개 → N chunk로 확장.
+        # 각 chunk는 별도 학습 샘플이고, eval 시 ecg_id 기준으로 평균집계.
+        self.chunk_length = chunk_length
+        if (chunk_length is not None and target_length is not None
+                and chunk_length > 0 and chunk_length < target_length):
+            self.n_chunks_per_ecg = int(target_length // chunk_length)
+        else:
+            self.n_chunks_per_ecg = 1
+            self.chunk_length = None
+
+        n_rows = len(self.table)
+        if self.n_chunks_per_ecg > 1:
+            self._row_idx = np.repeat(np.arange(n_rows), self.n_chunks_per_ecg)
+            self._chunk_idx = np.tile(np.arange(self.n_chunks_per_ecg), n_rows)
+        else:
+            self._row_idx = np.arange(n_rows)
+            self._chunk_idx = np.zeros(n_rows, dtype=int)
+
     def _expand_segments(self):
         """모든 세그먼트를 개별 샘플로 확장합니다."""
         expanded_rows = []
@@ -122,11 +146,13 @@ class H5ECGDataset(Dataset):
         self.seg_indices = expanded_segs
 
     def __len__(self):
-        return len(self.table)
+        return len(self._row_idx)
 
     def __getitem__(self, idx):
-        row = self.table.iloc[idx]
-        seg_i = self.seg_indices[idx] if hasattr(self, "seg_indices") else 0
+        table_idx = int(self._row_idx[idx])
+        chunk_idx = int(self._chunk_idx[idx])
+        row = self.table.iloc[table_idx]
+        seg_i = self.seg_indices[table_idx] if hasattr(self, "seg_indices") else 0
         h5_path = self.h5_root / row["filepath"]
 
         # H5에서 신호 로드
@@ -143,6 +169,12 @@ class H5ECGDataset(Dataset):
         # 2단계: target_length에 맞춰 crop 또는 pad
         if self.target_length:
             sig = self._adjust_length(sig, self.target_length)
+
+        # 3단계: chunk_length가 설정되면 non-overlapping window slice
+        if self.chunk_length is not None and self.n_chunks_per_ecg > 1:
+            s = chunk_idx * self.chunk_length
+            e = s + self.chunk_length
+            sig = sig[:, s:e]
 
         # 정규화
         if self.normalize and self.mean is not None and self.std is not None:
@@ -161,10 +193,11 @@ class H5ECGDataset(Dataset):
             label = np.zeros(1, dtype=np.float32)
 
         return {
-            "signal": torch.from_numpy(sig),          # (n_leads, samples)
+            "signal": torch.from_numpy(sig),          # (n_leads, chunk_length or target_length)
             "label":  torch.from_numpy(label),         # (num_classes,)
             "fs":     fs,
             "idx":    idx,
+            "ecg_id": table_idx,                      # ECG-level id (eval 평균집계 키)
         }
 
     @staticmethod
@@ -230,6 +263,7 @@ def build_dataloaders(cfg, split="train"):
         label_cols=cfg.get("label_cols"),
         target_fs=cfg.get("target_fs"),
         target_length=cfg.get("target_length"),
+        chunk_length=cfg.get("chunk_length"),
         seg_idx=cfg.get("seg_idx", None),
         normalize=cfg.get("normalize", False),
         fold_col=cfg.get("fold_col"),

@@ -16,7 +16,7 @@ eval_mode: linear_probe
 # Head 설정
 head:
   dropout: 0.0
-  num_heads: 8     # attention head용
+  num_heads: 16    # attention head용 (paper: heads=16)
   hidden_dim: 256  # mlp head용
 
 # Fold split (ecg-fm-benchmarking 동일 방식)

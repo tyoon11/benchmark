@@ -37,6 +37,11 @@ class ECGJEPAEncoder(nn.Module):
     # 12리드 중 8채널 선택: I, II, V1, V2, V3, V4, V5, V6
     SELECTED_LEADS = [0, 1, 6, 7, 8, 9, 10, 11]
 
+    # Paper: input_size=10s, fs_model=250 → 2500 samples per window (full ECG).
+    chunk_seconds = 10.0
+    model_fs = 250
+    model_seq_len = 2500
+
     def __init__(
         self,
         embed_dim: int = 768,
@@ -88,7 +93,7 @@ class ECGJEPAEncoder(nn.Module):
 
     def forward(self, x):
         """
-        x: (B, 12, 5000) at 500Hz → 8채널 선택 후 250Hz × 10s (2500 samples)로 리샘플
+        x: (B, 12, T) at data target_fs → 8채널 선택 후 2500 samples (10s @ 250Hz)
         → (sequence_features, pooled_features)
         """
         x = torch.nan_to_num(x)
@@ -97,10 +102,8 @@ class ECGJEPAEncoder(nn.Module):
         if x.shape[1] == 12:
             x = x[:, self.SELECTED_LEADS, :]
 
-        # 500Hz × 10s → 250Hz × 10s = 2500 samples
-        x = F.interpolate(x, size=2500, mode="linear", align_corners=False)
-        # Crop to input_size × fs_model = 10s × 250Hz = 2500 samples (full)
-        x = x[:, :, :2500]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
         B, L, _ = x.shape
         x_patch = x.reshape(B, -1, self.encoder.t)   # (B, L*p, t)

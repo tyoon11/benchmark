@@ -99,10 +99,14 @@ class CPCEncoder(nn.Module):
     S4 predictor 로드에 실패하면 encoder-only로 fallback합니다.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 240Hz × 10s (2400 samples)
-           and cropped to 2.5s (600 samples) internally
+      - x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
       - pooled_features: (B, 512)
     """
+
+    # Paper: input_size=2.5s, fs_model=240 → 600 samples per window.
+    chunk_seconds = 2.5
+    model_fs = 240
+    model_seq_len = 600
 
     def __init__(self, checkpoint=None, config_path=None):
         super().__init__()
@@ -193,12 +197,10 @@ class CPCEncoder(nn.Module):
         print(f"[CPCEncoder] Loaded from {path} (epoch={ckpt.get('epoch', '?')})")
 
     def forward(self, x):
-        """x: (B, 12, 5000) at 500Hz → resample to 240Hz × 10s (2400) → crop to 2.5s (600)"""
+        """x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)"""
         x = torch.nan_to_num(x)
-        # Resample 500Hz × 10s → 240Hz × 10s = 2400 samples
-        x = F.interpolate(x, size=2400, mode="linear", align_corners=False)
-        # Crop to input_size × fs_model = 2.5s × 240Hz = 600 samples
-        x = x[:, :, :600]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
         # Encoder: (B, 12, 600) → (B, 512, T')
         enc_out = self.encoder(x)  # (B, 512, T')

@@ -43,6 +43,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from src.dataset import H5ECGDataset, build_dataloaders
+from src.dataset_numpy import EchoNextDataset
 from src.wrapper import DownstreamWrapper
 from src.trainer import DownstreamTrainer
 
@@ -164,23 +165,51 @@ def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
 # DataLoader (DDP-aware)
 # ═══════════════════════════════════════════════════════════════
 def build_dataloaders_ddp(data_cfg, split="train"):
-    """DDP를 고려한 DataLoader 생성"""
+    """
+    DDP를 고려한 DataLoader 생성.
+
+    loader_type:
+      - 'h5' (default): H5ECGDataset (fold 기반 split)
+      - 'echonext_numpy': EchoNextDataset (.npy + metadata.csv, 사전 정의된 split 사용)
+    """
     from torch.utils.data import DataLoader
 
-    ds = H5ECGDataset(
-        h5_root=data_cfg["h5_root"],
-        table_csv=data_cfg["table_csv"],
-        label_csv=data_cfg.get("label_csv"),
-        label_cols=data_cfg.get("label_cols"),
-        target_fs=data_cfg.get("target_fs"),
-        target_length=data_cfg.get("target_length"),
-        seg_idx=data_cfg.get("seg_idx", None),
-        normalize=data_cfg.get("normalize", False),
-        fold_col=data_cfg.get("fold_col"),
-        fold_ids=data_cfg.get(f"{split}_folds"),
-        mean=data_cfg.get("mean"),
-        std=data_cfg.get("std"),
-    )
+    loader_type = data_cfg.get("loader_type", "h5")
+
+    if loader_type == "echonext_numpy":
+        # split_overrides: smoke test에서 train→val 같은 매핑용
+        md_split = data_cfg.get("split_overrides", {}).get(split, split)
+        ds = EchoNextDataset(
+            waveform_npy=data_cfg["waveforms"][split],
+            metadata_csv=data_cfg["metadata_csv"],
+            split=md_split,
+            split_col=data_cfg.get("split_col", "split"),
+            label_cols=data_cfg["label_cols"],
+            source_fs=int(data_cfg.get("source_fs", 250)),
+            target_fs=data_cfg.get("target_fs"),
+            target_length=data_cfg.get("target_length"),
+            normalize=bool(data_cfg.get("normalize", False)),
+            mean=data_cfg.get("mean"),
+            std=data_cfg.get("std"),
+            n_leads=int(data_cfg.get("n_leads", 12)),
+            layout=str(data_cfg.get("layout", "NHWC")),
+        )
+    else:
+        ds = H5ECGDataset(
+            h5_root=data_cfg["h5_root"],
+            table_csv=data_cfg["table_csv"],
+            label_csv=data_cfg.get("label_csv"),
+            label_cols=data_cfg.get("label_cols"),
+            target_fs=data_cfg.get("target_fs"),
+            target_length=data_cfg.get("target_length"),
+            chunk_length=data_cfg.get("chunk_length"),
+            seg_idx=data_cfg.get("seg_idx", None),
+            normalize=data_cfg.get("normalize", False),
+            fold_col=data_cfg.get("fold_col"),
+            fold_ids=data_cfg.get(f"{split}_folds"),
+            mean=data_cfg.get("mean"),
+            std=data_cfg.get("std"),
+        )
 
     sampler = None
     shuffle = (split == "train")
@@ -275,6 +304,21 @@ def main():
     if is_main_process():
         logging.info(f"Encoder feature_dim={feature_dim}")
 
+    # ── Multi-window 확장 (paper §3.3) ──
+    # 인코더가 chunk_seconds를 노출하면 dataset이 ECG 1개를 N chunk로 쪼갬.
+    # → 학습 데이터 N배 + eval 시 ecg_id 평균집계.
+    chunk_seconds = getattr(encoder, "chunk_seconds", None)
+    if chunk_seconds is not None and data_cfg.get("target_fs"):
+        chunk_length = int(round(chunk_seconds * float(data_cfg["target_fs"])))
+        if chunk_length < int(data_cfg.get("target_length", 0)):
+            data_cfg["chunk_length"] = chunk_length
+            if is_main_process():
+                logging.info(
+                    f"Multi-window enabled: chunk_seconds={chunk_seconds} "
+                    f"→ chunk_length={chunk_length} samples "
+                    f"(target_length={data_cfg['target_length']})"
+                )
+
     # ── Model Wrapper ──
     model = DownstreamWrapper(
         encoder=encoder,
@@ -339,7 +383,12 @@ def main():
     val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
 
     test_loader = None
-    if data_cfg.get("test_folds"):
+    has_test = (
+        data_cfg.get("test_folds")
+        or (data_cfg.get("loader_type") == "echonext_numpy"
+            and "test" in data_cfg.get("waveforms", {}))
+    )
+    if has_test:
         _, test_loader = build_dataloaders_ddp(data_cfg, "test")
 
     if is_main_process():
