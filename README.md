@@ -46,8 +46,7 @@ Pediatric ECG interp:        zzu_pecg
 Cardiac structure & func:    echonext              (NumPy loader)
 
 Variants:                    code15_diag, code15_diag_jepa, cpsc2021_af,
-                             physionet_all, ptbxl_super_jepa,
-                             echonext_multi, echonext_smoke
+                             physionet_all, ptbxl_super_jepa
 ```
 
 Task 정의는 [`configs/tasks/*.yaml`](configs/tasks/).
