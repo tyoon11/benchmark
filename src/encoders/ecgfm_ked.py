@@ -2,7 +2,8 @@
 ECG-FM-KED Encoder Adapter
 ============================
 Paper: https://doi.org/10.1016/j.xcrm.2024.101875
-Model sampling frequency: 100 Hz
+Pretraining sampling frequency: 100 Hz
+Benchmark fs (run.sh): fs_model=500, input_size=10s → 5000 samples
 Embedding dimension: 768
 """
 
@@ -46,9 +47,16 @@ class EcgFmKEDEncoder(nn.Module):
     ECG-FM-KED (xresnet1d101) encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 100Hz × 10s (1000 samples) internally
+      - x: (B, 12, T) at data target_fs → 5000 samples (10s @ 500Hz)
+        (paper's run.sh uses fs_model=500, NOT the model's pretraining 100Hz —
+         xresnet1d101 is a CNN that accepts any rate)
       - pooled_features: (B, 768)
     """
+
+    # Paper run.sh: input_size=10s, fs_model=500 → 5000 samples (full ECG).
+    chunk_seconds = 10.0
+    model_fs = 500
+    model_seq_len = 5000
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -79,14 +87,12 @@ class EcgFmKEDEncoder(nn.Module):
         print(f"[EcgFmKEDEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, 5000) at 500Hz → resample to 100Hz × 10s = 1000 samples"""
+        """x: (B, 12, T) at data target_fs → 5000 samples (10s @ 500Hz, paper run.sh)"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)
-        # Resample to 100Hz × 10s = 1000 samples
-        x = F.interpolate(x, size=1000, mode="linear", align_corners=False)
-        # Crop to input_size × fs_model = 10s × 100Hz = 1000 samples (full)
-        x = x[:, :, :1000]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
         # nn.Sequential forward — DataParallel safe (모델이 같은 device에 있음)
         seq = nn.Sequential.forward(self.model, x)  # (B, 768, T')

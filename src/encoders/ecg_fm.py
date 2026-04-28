@@ -164,10 +164,15 @@ class ECGFMEncoder(nn.Module):
     ECG-FM encoder wrapper for benchmark.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 5000) at 500Hz (10s) — cropped to 5s (2500 samples) internally
+      - x: (B, 12, T) at data target_fs → 2500 samples (5s @ 500Hz)
       - sequence_features: (B, T', 768)
       - pooled_features: (B, 768) via GAP
     """
+
+    # Paper: input_size=5s, fs_model=500 → 2500 samples per window.
+    chunk_seconds = 5.0
+    model_fs = 500
+    model_seq_len = 2500
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -217,12 +222,10 @@ class ECGFMEncoder(nn.Module):
             print(f"  Unexpected: {len(unexpected)} keys ({unexpected[:3]}...)")
 
     def forward(self, x):
-        """x: (B, 12, 5000) at 500Hz → crop to 5s (2500 samples)"""
+        """x: (B, 12, T) at data target_fs → 2500 samples (5s @ 500Hz)"""
         x = torch.nan_to_num(x)
-        # Resample to fs_model × 10s = 500Hz × 10s = 5000 (identity)
-        x = F.interpolate(x, size=5000, mode="linear", align_corners=False)
-        # Crop to input_size × fs_model = 5s × 500Hz = 2500 samples
-        x = x[:, :, :2500]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
         seq_feat = self.model(x)             # (B, T', 768)
         pooled = seq_feat.mean(dim=1)        # (B, 768)
         return seq_feat, pooled

@@ -21,10 +21,14 @@ class HuBERTECGEncoder(nn.Module):
     HuBERT-ECG encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, 5000) at 500Hz (10s) — resampled to 100Hz × 10s (1000 samples)
-           then cropped to 5s (500 samples) internally
+      - x: (B, 12, T) at data target_fs → 500 samples (5s @ 100Hz)
       - pooled_features: (B, 768)
     """
+
+    # Paper: input_size=5s, fs_model=100 → 500 samples per window.
+    chunk_seconds = 5.0
+    model_fs = 100
+    model_seq_len = 500
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -58,12 +62,10 @@ class HuBERTECGEncoder(nn.Module):
         return np.stack(processed, axis=0)
 
     def forward(self, x):
-        """x: (B, 12, 5000) at 500Hz → resample to 100Hz × 10s (1000) → crop to 5s (500)"""
+        """x: (B, 12, T) at data target_fs → 500 samples (5s @ 100Hz)"""
         x = torch.nan_to_num(x)
-        # Resample 500Hz × 10s → 100Hz × 10s = 1000 samples
-        x = F.interpolate(x, size=1000, mode="linear", align_corners=False)
-        # Crop to input_size × fs_model = 5s × 100Hz = 500 samples
-        x = x[:, :, :500]
+        if x.shape[-1] != self.model_seq_len:
+            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
         x_np = x.detach().cpu().numpy()
         x_np = self._preprocess(x_np)

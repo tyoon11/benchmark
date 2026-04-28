@@ -40,9 +40,14 @@ class H5ECGDataset(Dataset):
         target_fs:      모델이 기대하는 샘플링 주파수 (None이면 리샘플링 안 함)
         target_length:  모델이 기대하는 시계열 길이 (샘플 수, None이면 조정 안 함)
         chunk_length:   인코더가 한 번에 보는 window 크기 (target_fs 기준 샘플 수).
-                        설정되면 ECG 1개를 ⌊target_length / chunk_length⌋ 개의
-                        non-overlapping chunk로 확장 (paper §3.3 multi-window).
-                        None이면 전체 ECG 1개를 그대로 반환.
+                        None이면 chunking 없음 (전체 ECG 그대로 반환).
+                        random_crop=False (val/test): ECG 1개를
+                        ⌊target_length/chunk_length⌋개의 non-overlapping chunk로 확장.
+                        random_crop=True  (train)  : ECG 1개당 1 sample, 매
+                        __getitem__마다 random offset에서 chunk_length만큼 slice
+                        (paper main_lite.py default chunkify_train=False).
+        random_crop:    True면 train 모드 (random offset), False면 deterministic
+                        chunking. (paper §3.3)
         seg_idx:        사용할 세그먼트 인덱스 (None이면 seg0만, 'all'이면 모든 세그먼트)
         normalize:      True면 per-lead z-score (dataset mean/std)
         fold_col:       fold 컬럼명
@@ -60,6 +65,7 @@ class H5ECGDataset(Dataset):
         target_fs:     int = None,
         target_length: int = None,
         chunk_length:  int = None,
+        random_crop:   bool = False,
         seg_idx:       str = None,  # None(=0), 'all', or int
         normalize:     bool = False,
         fold_col:      str = None,
@@ -109,15 +115,21 @@ class H5ECGDataset(Dataset):
             self.seg_indices = [int(seg_idx) if seg_idx is not None else 0] * len(self.table)
 
         # ── Chunk 확장 (paper §3.3 multi-window train + test-time aggregation) ──
-        # chunk_length가 target_length보다 작으면 ECG 1개 → N chunk로 확장.
-        # 각 chunk는 별도 학습 샘플이고, eval 시 ecg_id 기준으로 평균집계.
+        # train (random_crop=True):  1 sample/ECG, __getitem__마다 random offset
+        # val/test (random_crop=False): ⌊target_length/chunk_length⌋ deterministic chunks
         self.chunk_length = chunk_length
+        self.random_crop = random_crop
         if (chunk_length is not None and target_length is not None
                 and chunk_length > 0 and chunk_length < target_length):
-            self.n_chunks_per_ecg = int(target_length // chunk_length)
+            if random_crop:
+                self.n_chunks_per_ecg = 1   # random offset, 1 view per epoch
+            else:
+                self.n_chunks_per_ecg = int(target_length // chunk_length)
+            self._random_max_start = int(target_length - chunk_length)
         else:
             self.n_chunks_per_ecg = 1
             self.chunk_length = None
+            self._random_max_start = 0
 
         n_rows = len(self.table)
         if self.n_chunks_per_ecg > 1:
@@ -170,9 +182,13 @@ class H5ECGDataset(Dataset):
         if self.target_length:
             sig = self._adjust_length(sig, self.target_length)
 
-        # 3단계: chunk_length가 설정되면 non-overlapping window slice
-        if self.chunk_length is not None and self.n_chunks_per_ecg > 1:
-            s = chunk_idx * self.chunk_length
+        # 3단계: chunk_length가 설정되면 window slice
+        # train (random_crop=True): random offset; val/test: deterministic chunk_idx
+        if self.chunk_length is not None:
+            if self.random_crop and self._random_max_start > 0:
+                s = int(np.random.randint(0, self._random_max_start + 1))
+            else:
+                s = chunk_idx * self.chunk_length
             e = s + self.chunk_length
             sig = sig[:, s:e]
 
@@ -264,6 +280,7 @@ def build_dataloaders(cfg, split="train"):
         target_fs=cfg.get("target_fs"),
         target_length=cfg.get("target_length"),
         chunk_length=cfg.get("chunk_length"),
+        random_crop=(split == "train"),
         seg_idx=cfg.get("seg_idx", None),
         normalize=cfg.get("normalize", False),
         fold_col=cfg.get("fold_col"),

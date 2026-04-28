@@ -31,6 +31,12 @@ class EchoNextDataset(Dataset):
         source_fs:       waveform native fs (250)
         target_fs:       모델이 기대하는 fs (None=리샘플 안 함)
         target_length:   모델이 기대하는 길이 (샘플)
+        chunk_length:    인코더 한 window 크기 (target_fs 기준 샘플 수). 설정되면
+                         random_crop=False (val/test): ⌊target_length/chunk_length⌋
+                                                       deterministic non-overlapping chunks
+                         random_crop=True  (train): 1 sample/ECG, random offset
+                         (paper §3.3 multi-window).
+        random_crop:     True (train) / False (val/test). chunk_length이 설정된 경우만 의미.
         normalize:       True면 mean/std로 추가 z-score (EchoNext는 이미 정규화됨)
         mean, std:       per-lead (n_leads,)
         n_leads:         12
@@ -47,6 +53,8 @@ class EchoNextDataset(Dataset):
         source_fs:     int = 250,
         target_fs:     int = None,
         target_length: int = None,
+        chunk_length:  int = None,
+        random_crop:   bool = False,
         normalize:     bool = False,
         mean:          np.ndarray = None,
         std:           np.ndarray = None,
@@ -95,8 +103,33 @@ class EchoNextDataset(Dataset):
         labels = np.nan_to_num(labels, nan=0.0)
         self.labels = labels  # (N, num_classes)
 
+        # ── Chunk 확장 (paper §3.3 multi-window) ──
+        # train (random_crop=True):  1 sample/ECG, __getitem__마다 random offset
+        # val/test (random_crop=False): ⌊target_length/chunk_length⌋ deterministic chunks
+        self.chunk_length = chunk_length
+        self.random_crop = random_crop
+        if (chunk_length is not None and target_length is not None
+                and chunk_length > 0 and chunk_length < target_length):
+            if random_crop:
+                self.n_chunks_per_ecg = 1
+            else:
+                self.n_chunks_per_ecg = int(target_length // chunk_length)
+            self._random_max_start = int(target_length - chunk_length)
+        else:
+            self.n_chunks_per_ecg = 1
+            self.chunk_length = None
+            self._random_max_start = 0
+
+        n_rows = len(self.df)
+        if self.n_chunks_per_ecg > 1:
+            self._row_idx = np.repeat(np.arange(n_rows), self.n_chunks_per_ecg)
+            self._chunk_idx = np.tile(np.arange(self.n_chunks_per_ecg), n_rows)
+        else:
+            self._row_idx = np.arange(n_rows)
+            self._chunk_idx = np.zeros(n_rows, dtype=int)
+
     def __len__(self):
-        return len(self.df)
+        return len(self._row_idx)
 
     def _read_signal(self, idx) -> np.ndarray:
         """(n_leads, target_length) float32 신호 반환."""
@@ -134,13 +167,26 @@ class EchoNextDataset(Dataset):
         return sig
 
     def __getitem__(self, idx):
-        sig = self._read_signal(idx)
-        label = self.labels[idx]
+        table_idx = int(self._row_idx[idx])
+        chunk_idx = int(self._chunk_idx[idx])
+        sig = self._read_signal(table_idx)
+
+        # Chunk slice — train: random offset, val/test: deterministic chunk_idx
+        if self.chunk_length is not None:
+            if self.random_crop and self._random_max_start > 0:
+                s = int(np.random.randint(0, self._random_max_start + 1))
+            else:
+                s = chunk_idx * self.chunk_length
+            e = s + self.chunk_length
+            sig = sig[:, s:e]
+
+        label = self.labels[table_idx]
         return {
             "signal": torch.from_numpy(sig),
             "label":  torch.from_numpy(label),
             "fs":     self.source_fs,
             "idx":    idx,
+            "ecg_id": table_idx,
         }
 
     @staticmethod
@@ -192,6 +238,8 @@ def build_echonext_dataloaders(cfg: dict, split: str = "train"):
         source_fs=int(cfg.get("source_fs", 250)),
         target_fs=cfg.get("target_fs"),
         target_length=cfg.get("target_length"),
+        chunk_length=cfg.get("chunk_length"),
+        random_crop=(split == "train"),
         normalize=bool(cfg.get("normalize", False)),
         mean=cfg.get("mean"),
         std=cfg.get("std"),
