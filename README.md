@@ -5,6 +5,69 @@ H5 기반 ECG 다운스트림 태스크 벤치마크 프레임워크.
 
 논문 [*Benchmarking ECG FMs: A Reality Check Across Clinical Tasks*](https://github.com/) (ICLR 2026 submission) 의 학습/평가 절차를 그대로 따릅니다 — 인코더별 input window, train시 random crop, val/test시 multi-window mean aggregation 모두 동일.
 
+## Fresh clone 셋업
+
+이 repo만 clone해서는 **인코더가 동작하지 않습니다** — 외부 코드베이스 2개 + paper checkpoint + ECG H5 데이터가 별도로 필요합니다.
+
+### 1. Python 의존성
+
+```bash
+git clone https://github.com/tyoon11/benchmark.git
+cd benchmark
+pip install -r requirements.txt
+```
+
+### 2. 외부 코드 의존성 (인코더 backbone)
+
+| 외부 repo | 어떤 인코더에 필요? | 환경변수 | 기본 경로 |
+|---|---|---|---|
+| [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) (`code/clinical_ts/`) | ECGFounder, ST-MEM, CPC, MERL, ECGFM-KED, HuBERT-ECG | `ECG_FM_BENCH_DIR` | `/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code` |
+| [`ecg_jepa`](https://github.com/sehunfromdaegu/ECG_JEPA) | ECG-JEPA만 | `ECG_JEPA_DIR` | `/home/irteam/local-node-d/tykim/ecg_jepa` |
+
+기본 경로(`/home/irteam/...`)와 다른 곳에 두면 환경변수로 override:
+
+```bash
+export ECG_FM_BENCH_DIR=/your/path/to/ecg-fm-benchmarking/code
+export ECG_JEPA_DIR=/your/path/to/ecg_jepa
+```
+
+(ECG-FM 인코더는 이 repo에 self-contained라 외부 repo 불필요)
+
+### 3. 사전학습 체크포인트
+
+각 모델 paper repo에서 다운로드한 후 `configs/models.sh` + `run_parallel_tasks.sh` 의 `MODEL_CKPT_MAP` / `MODEL_CKPT` 경로를 수정:
+
+| Model | URL |
+|---|---|
+| ECGFounder | https://huggingface.co/PKUDigitalHealth/ECGFounder |
+| ECG-JEPA (multiblock) | https://drive.google.com/file/d/1mh-XL0XOvvhFbhvuZ9c2KnTHa9B4F3Wx/view |
+| ST-MEM | https://drive.google.com/file/d/1E7J-A1HqWa2f08T6Sfk5uWk-_CFJhOYQ/view |
+| MERL ResNet | https://drive.google.com/drive/folders/13wb4DppUciMn-Y_qC2JRWTbZdz3xX0w2 |
+| ECGFM-KED | https://zenodo.org/records/14881564 |
+| HuBERT-ECG (base) | (paper repo) |
+| ECG-FM | (paper repo, MIMIC-IV pretrained) |
+| CPC | paper [`ecg-fm-benchmarking`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) |
+
+### 4. ECG 데이터셋 (H5 + label CSV)
+
+`configs/tasks/*.yaml`의 `h5_root`, `table_csv`, `label_csv` 경로를 본인 환경에 맞게 수정. 라벨은 `labels/` 폴더에 paper와 동일한 셋이 들어있음. H5는 paper의 데이터 변환 파이프라인을 거친 표준 H5 포맷 사용 — `convert_raw_to_h5` 결과물.
+
+EchoNext만 H5가 아닌 NumPy `.npy` 직접 로드 — `loader_type: echonext_numpy` 가 자동 분기.
+
+### 5. 동작 확인
+
+```bash
+# 더미 인코더로 1 epoch smoke test (외부 의존성 무관)
+python run.py --task ptbxl_super --eval_mode linear_probe --dummy --epochs 1
+
+# 실제 모델 한 개로 3 epoch 검증
+python run.py --task ptbxl_super --eval_mode linear_probe \
+    --encoder_cls src.encoders.ecg_founder.ECGFounderEncoder \
+    --encoder_ckpt /path/to/ecg_founder.pth --epochs 3
+```
+
+`Multi-window enabled: chunk_seconds=2.5 → chunk_length=1250 samples` 로그가 찍히면 paper-aligned 동작 OK.
+
 ## 구조
 
 ```
