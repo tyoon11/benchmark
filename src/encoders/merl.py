@@ -6,13 +6,17 @@ Model sampling frequency: 500 Hz
 Embedding dimension: 512
 """
 
+import os
 import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
 
-ECG_FM_BENCH = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code")
+ECG_FM_BENCH = Path(os.environ.get(
+    "ECG_FM_BENCH_DIR",
+    "/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code",
+))
 sys.path.insert(0, str(ECG_FM_BENCH))
 
 
