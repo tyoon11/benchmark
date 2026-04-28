@@ -185,6 +185,34 @@ class MyModelEncoder(nn.Module):
 - **8-lead 모델**은 forward에서 `x = x[:, lead_idx, :]` 채널 select (예: ECG-JEPA)
 - **BatchNorm 모델**은 frozen eval시 `DownstreamWrapper`가 BN stats 자동 freeze
 - **Fixed pos_embedding** 모델은 zero-pad 필요할 수 있음
+- **Pretrained backbone wrapper의 추가 projection 누락 주의** — paper의 wrapper class
+  (예: `S4Predictor`, `RNNEncoder`)가 내부에서 raw 모델을 wrap 하면서 input projection
+  을 추가/skip 하는 경우, raw 모델만 가져오면 random-init Linear/Conv 1개가 끼어
+  feature가 corrupt 됨 (실측: CPC 0.78 vs paper 0.88 — 한 줄 차이 때문). 어댑터
+  작성 시 paper wrapper의 forward 흐름 그대로 재현하거나 wrapper class 자체를 import.
+
+### Paper와 공정 비교 contract (새 모델 추가 시)
+
+새 모델이 paper의 8개 모델과 **같은 조건에서 평가**되도록 보장하는 항목:
+
+| 항목 | 자동 보장 | 사용자가 신경쓸 부분 |
+|---|---|---|
+| **데이터 split** | `strat_fold` 기반 자동 split (paper 동일) | 새 task 만들 땐 `strat_fold` 컬럼 포함 |
+| **라벨셋** | `labels/` 안의 paper-canonical 라벨 자동 사용 | task yaml의 `label_csv` 만 잘 지정 |
+| **Optimizer/Schedule** | AdamW + lr=1e-3 + const + 100 epoch (paper 동일) | 다른 모델만 다른 lr 쓰면 부정 비교 — default 유지 |
+| **Loss** | BCEWithLogits multi-label (paper 동일) | 인코더 출력 dim이 task `num_classes`와 일치만 보장 |
+| **Multi-window train+agg** | `chunk_seconds` 선언만 하면 자동 (paper §3.3) | **반드시 paper run.sh와 동일한 input_size × fs_model** |
+| **Layer-LR (finetune)** | head=lr, late=0.1lr, early=0.01lr (paper 동일) | `get_layer_groups()` 미구현시 head + 전체 2그룹 fallback |
+| **Eval modes (4)** | linear_probe / attention_probe / finetune_linear / finetune_attention | head는 framework 가 동일 (V-JEPA learnable query, heads=16) |
+| **Test-time aggregation** | non-overlapping chunks 평균집계 (paper 동일) | 자동 |
+| **Frozen eval 시 BN** | `DownstreamWrapper`가 자동 freeze (paper 동일) | 자동 |
+
+**공정성 위반 시그널** (이게 보이면 비교가 부정확):
+- 새 모델만 다른 epoch / lr / batch_size 쓰는 경우
+- Pretrain 데이터셋이 평가 task의 train set과 겹치는데 데이터 leak 안 막은 경우 (paper 모델도 일부 그러므로 새 모델만 별도 corrigendum 필요)
+- 새 모델이 normalize=true 를 강제하는데 task yaml 수정 안 한 경우
+- `chunk_seconds`를 paper 보다 작게 설정 (input window 줄어 unfair advantage 또는 disadvantage)
+- forward 안에서 추가 augmentation/dropout 등 paper에 없는 것 적용
 
 ### 등록 (3 줄)
 
