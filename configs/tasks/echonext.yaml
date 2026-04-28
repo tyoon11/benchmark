@@ -1,8 +1,10 @@
-# EchoNext — Structural Heart Disease (SHD) detection (단일 binary)
-# ecg-fm-benchmarking 원본 echonext task와 동일하게 250Hz × 10초 = 2500 samples 사용
+# EchoNext — 원본 ecg-fm-benchmarking과 동일: 11-label multi-label
+# (composite shd_moderate_or_greater_flag는 11개의 OR이므로 제외)
+# ref: ecg-fm-benchmarking/code/main_lite_ecg.py:65 (num_classes=11)
+#      ecg-fm-benchmarking/code/clinical_ts/utils/ecg_utils.py:1344 (lbl_itos)
 task:
-  name: echonext_shd
-  num_classes: 1
+  name: echonext
+  num_classes: 11
 
 data:
   loader_type: echonext_numpy
@@ -12,7 +14,17 @@ data:
     val:   /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_val_waveforms.npy
     test:  /home/irteam/ddn-opendata1/raw/physionet.org/files/echonext/1.1.0/EchoNext_test_waveforms.npy
   label_cols:
-    - shd_moderate_or_greater_flag
+    - lvef_lte_45_flag
+    - lvwt_gte_13_flag
+    - aortic_stenosis_moderate_or_greater_flag
+    - aortic_regurgitation_moderate_or_greater_flag
+    - mitral_regurgitation_moderate_or_greater_flag
+    - tricuspid_regurgitation_moderate_or_greater_flag
+    - pulmonary_regurgitation_moderate_or_greater_flag
+    - rv_systolic_dysfunction_moderate_or_greater_flag
+    - pericardial_effusion_moderate_large_flag
+    - pasp_gte_45_flag
+    - tr_max_gte_32_flag
   split_col: split
   source_fs: 250
   target_fs: 250
