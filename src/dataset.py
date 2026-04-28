@@ -84,7 +84,13 @@ class H5ECGDataset(Dataset):
         self.table = pd.read_csv(table_csv, low_memory=False)
 
         # 라벨 CSV 로드 + 조인
-        self.has_labels = label_csv is not None and os.path.exists(label_csv)
+        if label_csv is not None and not os.path.exists(label_csv):
+            raise FileNotFoundError(
+                f"label_csv 가 지정되었으나 파일이 없습니다: {label_csv}\n"
+                f"  → task yaml의 label_csv 경로를 확인하세요. "
+                f"(상대경로인 경우 run.py가 자동으로 repo root 기준으로 resolve합니다.)"
+            )
+        self.has_labels = label_csv is not None
         if self.has_labels:
             label_df = pd.read_csv(label_csv, low_memory=False)
             key_cols = ["filepath"]

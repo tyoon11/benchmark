@@ -131,6 +131,18 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
                 d = d.setdefault(p, {})
             d[parts[-1]] = v
 
+    # 상대경로 resolve: 태스크 yaml에 'labels/xxx.csv' 처럼 적힌 항목은
+    # repo root (SCRIPT_DIR) 기준 절대경로로 변환. 절대경로면 그대로.
+    data_section = cfg.get("data", {})
+    for key in ("label_csv", "table_csv", "h5_root", "metadata_csv"):
+        v = data_section.get(key)
+        if isinstance(v, str) and not os.path.isabs(v):
+            data_section[key] = str(SCRIPT_DIR / v)
+    if "waveforms" in data_section and isinstance(data_section["waveforms"], dict):
+        for split, p in data_section["waveforms"].items():
+            if isinstance(p, str) and not os.path.isabs(p):
+                data_section["waveforms"][split] = str(SCRIPT_DIR / p)
+
     return cfg
 
 
