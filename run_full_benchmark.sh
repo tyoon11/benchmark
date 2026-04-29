@@ -7,9 +7,12 @@
 #
 # 사용법:
 #   bash run_full_benchmark.sh              # linear_probe (새 timestamp)
-#   bash run_full_benchmark.sh all          # 4가지 모드 전부
+#   bash run_full_benchmark.sh all          # 3 모드 (linear/attention probe + finetune_linear)
 #   bash run_full_benchmark.sh all 20260413_183153   # 기존 timestamp에 이어서 실행
 #                                                     (이미 완료된 실험은 skip)
+#
+#   MODES_OVERRIDE="linear_probe finetune_attention" bash run_full_benchmark.sh
+#       # 임의 모드 조합 — all 의 default 와 무관하게 정확히 그 mode만 실행
 #
 # 모니터링:
 #   tail -f results/{timestamp}/benchmark.log
@@ -89,7 +92,10 @@ FINETUNE_LR="1e-3"
 if [ -n "$MODES_OVERRIDE" ]; then
     MODES=($MODES_OVERRIDE)
 elif [ "$EVAL_MODE" = "all" ]; then
-    MODES=(linear_probe attention_probe finetune_linear finetune_attention)
+    # 기본 'all' 은 3 mode (linear_probe, attention_probe, finetune_linear).
+    # finetune_attention 도 돌리려면:
+    #   MODES_OVERRIDE="linear_probe attention_probe finetune_linear finetune_attention" bash run_full_benchmark.sh
+    MODES=(linear_probe attention_probe finetune_linear)
 else
     MODES=($EVAL_MODE)
 fi
