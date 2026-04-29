@@ -86,7 +86,9 @@ EPOCHS=100
 FINETUNE_EPOCHS=100
 FINETUNE_LR="1e-3"
 
-if [ "$EVAL_MODE" = "all" ]; then
+if [ -n "$MODES_OVERRIDE" ]; then
+    MODES=($MODES_OVERRIDE)
+elif [ "$EVAL_MODE" = "all" ]; then
     MODES=(linear_probe attention_probe finetune_linear finetune_attention)
 else
     MODES=($EVAL_MODE)
