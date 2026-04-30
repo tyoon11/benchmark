@@ -246,7 +246,7 @@ echo ""
 echo "완료! $(date '+%Y-%m-%d %H:%M:%S')"
 echo "결과: $RESULT_DIR"
 
-} > "$LOG" 2>&1
+} >> "$LOG" 2>&1   # append: 동일 timestamp resume 시 기존 log 덮어쓰지 않음
 
 echo "벤치마크 시작!"
 echo "  결과: $RESULT_DIR"
