@@ -1,6 +1,6 @@
 {
   "dataset": "mimic_age",
-  "source": "records_w_diag_icd10.csv (age in years at ECG time)",
+  "source": "records_w_diag_icd10.csv ∩ paper is_diagnostic cohort. age in years at ECG time.",
   "task_type": "regression",
   "n_labels": 1,
   "labels": {

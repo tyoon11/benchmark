@@ -319,6 +319,45 @@ def save_regression_csv(name, df, label_cols, source_desc):
 # ═══════════════════════════════════════════════════════════════
 # Tasks
 # ═══════════════════════════════════════════════════════════════
+def get_diagnostic_cohort(study_to_h5=None, return_filepath=True):
+    """원본 paper의 is_diagnostic==1 cohort 재현.
+
+    paper mimic_preprocessing.py:44-50 + ecg_utils.py prepare_mimic_ecg
+    (finetune_dataset='mimic_ed_all_edfirst_all_2000_5A'):
+      - subsettrain='ed' + has_statements_train==True
+      - subsettest='edfirst' (first ECG per stay) + has_statements_test==True
+
+    paper Table의 metadata task들 (sex/age/ecg_features/biometrics/vitals/labvalues)
+    및 MDS-ED task들이 모두 이 cohort에 한정됨.
+
+    Returns:
+        DataFrame with columns: study_id, subject_id, ecg_time, fold, [filepath]
+    """
+    df = pd.read_csv(ICD_CSV, low_memory=False)
+    df = parse_diag_lists(df, ["all_diag_all", "ed_diag_ed", "ed_diag_hosp",
+                                "hosp_diag_hosp", "all_diag_hosp"])
+    df["has_all"] = df["all_diag_all"].apply(lambda x: len(x) > 0)
+    df["has_ed"] = df["ed_diag_ed"].apply(lambda x: len(x) > 0)
+
+    # paper subsettrain='ed' OR subsettest='edfirst':
+    #   train: ED ECG + has_all (all_diag_all 비어있지 않음)
+    #   test:  ED ECG + ecg_no_within_stay==0 + has_ed
+    # 통합: ED ECG + (has_all OR has_ed)
+    cohort = df[
+        (df["ecg_taken_in_ed"] == True) &
+        (df["has_all"] | df["has_ed"])
+    ].copy()
+
+    if study_to_h5 is not None and return_filepath:
+        cohort["filepath"] = cohort["study_id"].apply(
+            lambda x: study_to_h5.get(int(x)) if pd.notna(x) else None
+        )
+        cohort = cohort[cohort["filepath"].notna()].copy()
+
+    return cohort[["study_id", "subject_id", "ecg_time", "fold", "strat_fold"] +
+                   (["filepath"] if return_filepath and study_to_h5 is not None else [])]
+
+
 def build_diagnostic_tasks(study_to_h5):
     """Cardiac / Non-cardiac discharge diagnoses (multi-label).
 
@@ -384,25 +423,28 @@ def build_diagnostic_tasks(study_to_h5):
 
 
 def build_sex_age_tasks(study_to_h5):
-    """Sex (binary), Age (regression) — records_w_diag_icd10.csv."""
+    """Sex (binary), Age (regression) — paper is_diagnostic cohort 적용."""
     logging.info("\n=== Sex / Age (patient characteristics) ===")
+    cohort = get_diagnostic_cohort(study_to_h5)
+    logging.info(f"  diagnostic cohort: {len(cohort):,}")
+
     df = pd.read_csv(ICD_CSV, low_memory=False,
                      usecols=["study_id", "gender", "age"])
-    df["filepath"] = df["study_id"].apply(
-        lambda x: study_to_h5.get(int(x)) if pd.notna(x) else None
-    )
-    df = df[df["filepath"].notna()].copy()
+    df = df.merge(cohort[["study_id", "filepath"]],
+                  on="study_id", how="inner")
 
     # sex
     df_sex = df[df["gender"].isin(["M", "F"])].copy()
     df_sex["sex"] = (df_sex["gender"] == "M").astype(int)
     save_binary_csv("sex", df_sex, "sex", "is_male",
-                    source_desc="records_w_diag_icd10.csv (gender=M→1, F→0)")
+                    source_desc="records_w_diag_icd10.csv ∩ paper is_diagnostic cohort "
+                                "(ED + has_statements). gender=M→1, F→0.")
 
     # age
     df_age = df[df["age"].notna()].copy()
     save_regression_csv("age", df_age, ["age"],
-                        source_desc="records_w_diag_icd10.csv (age in years at ECG time)")
+                        source_desc="records_w_diag_icd10.csv ∩ paper is_diagnostic cohort. "
+                                    "age in years at ECG time.")
 
 
 def build_ecg_features_task(study_to_h5):
@@ -428,27 +470,33 @@ def build_ecg_features_task(study_to_h5):
     # paper의 7개 feature
     feat_cols = ["RR", "QRS", "QT", "QTc", "P_wave_axis", "QRS_axis", "T_wave_axis"]
 
-    df["filepath"] = df["study_id"].apply(
-        lambda x: study_to_h5.get(int(x)) if pd.notna(x) else None
-    )
-    df = df[df["filepath"].notna()].copy()
+    # paper cohort intersection (mimic_preprocessing.py:420 is_diagnostic==1)
+    cohort = get_diagnostic_cohort(study_to_h5)
+    logging.info(f"  diagnostic cohort: {len(cohort):,}")
+    df = df.merge(cohort[["study_id", "filepath"]],
+                  on="study_id", how="inner")
 
     # 모든 feature가 NaN인 행 제거
     df = df.dropna(subset=feat_cols, how="all").copy()
-    logging.info(f"  H5 매핑 + 최소 1개 feature 보유: {len(df):,}")
+    logging.info(f"  cohort ∩ ECG features: {len(df):,}")
 
     save_regression_csv("ecg_features", df, feat_cols,
-                        source_desc="machine_measurements.csv (RR/QRS/QT/QTc/P_axis/QRS_axis/T_axis), "
-                                    "outlier 제거 후 raw 값")
+                        source_desc="machine_measurements.csv ∩ paper is_diagnostic cohort. "
+                                    "RR/QRS/QT/QTc/P_axis/QRS_axis/T_axis (outlier 처리 후 raw).")
 
 
-def _load_mds_ed_with_filepath(study_to_h5, value_cols):
-    """MDS-ED CSV 로드 + study_id → h5 filepath 매핑.
+def _load_mds_ed_with_filepath(study_to_h5, value_cols, restrict_to_cohort=True):
+    """MDS-ED CSV 로드 + study_id → h5 filepath 매핑 + paper cohort 필터.
 
     원본 mimic_preprocessing.py:
       - -999. 을 np.nan으로 변경 (line 75)
       - general_data, general_strat_fold, general_subject_id 사용
-    여기서는 general_study_id로 H5 매핑.
+      - line 420: is_diagnostic==1 cohort에 한정 (paper Table 5,577 / 17,639 / 18,690)
+
+    여기서는 general_study_id로 H5 매핑 + diagnostic cohort intersection.
+
+    추가로 paper Table 매칭 위해 "value column이 모두 NaN인 row 제거" 적용:
+      - paper의 "Samples" 카운트는 라벨 정의된 sample 수로 보임
     """
     df = pd.read_csv(MDS_ED_CSV, low_memory=False)
     keep = ["general_study_id", "general_subject_id", "general_strat_fold"] + value_cols
@@ -459,6 +507,21 @@ def _load_mds_ed_with_filepath(study_to_h5, value_cols):
         lambda x: study_to_h5.get(int(x)) if pd.notna(x) else None
     )
     df = df[df["filepath"].notna()].copy()
+
+    # value 컬럼이 모두 NaN인 row 제거 (paper Table samples 매칭용)
+    n_before_value = len(df)
+    df = df.dropna(subset=value_cols, how="all").copy()
+    logging.info(f"  MDS-ED rows: {len(df):,} / {n_before_value:,} "
+                 f"(value 컬럼 중 1개 이상 valid)")
+
+    # paper is_diagnostic cohort intersection (mimic_preprocessing.py:420)
+    if restrict_to_cohort:
+        cohort = get_diagnostic_cohort(study_to_h5, return_filepath=False)
+        cohort_studies = set(cohort["study_id"].astype(int))
+        n_before = len(df)
+        df = df[df["general_study_id"].astype(int).isin(cohort_studies)].copy()
+        logging.info(f"  cohort intersection: {len(df):,} / {n_before:,}")
+
     return df
 
 
@@ -667,10 +730,18 @@ def _load_chartevents_extract():
     return fdf.reset_index(drop=True)
 
 
-def _load_ecg_metadata():
-    """records_w_diag_icd10.csv → study_id, subject_id, ecg_time DataFrame."""
-    df = pd.read_csv(ICD_CSV, low_memory=False,
-                     usecols=["study_id", "subject_id", "ecg_time"])
+def _load_ecg_metadata(study_to_h5=None, cohort_only=True):
+    """records_w_diag_icd10.csv → study_id, subject_id, ecg_time DataFrame.
+
+    cohort_only=True: paper is_diagnostic cohort에 한정
+    (mimic_preprocessing.py:420 — biometrics/vitals/labvalues 모두 이 cohort).
+    """
+    if cohort_only and study_to_h5 is not None:
+        cohort = get_diagnostic_cohort(study_to_h5)
+        df = cohort[["study_id", "subject_id", "ecg_time"]].copy()
+    else:
+        df = pd.read_csv(ICD_CSV, low_memory=False,
+                         usecols=["study_id", "subject_id", "ecg_time"])
     df["ecg_time"] = pd.to_datetime(df["ecg_time"])
     return df
 
@@ -692,8 +763,9 @@ def build_biometrics_task(study_to_h5):
         logging.warning(f"  omr.csv.gz 없음 ({OMR_CSV}) — 건너뜀")
         return
 
-    df_ecg = _load_ecg_metadata()
+    df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
     subject_ids = set(df_ecg["subject_id"].unique())
+    logging.info(f"  diagnostic cohort: {len(df_ecg):,} ECGs / {len(subject_ids):,} patients")
 
     omr = pd.read_csv(OMR_CSV)
     omr = omr[omr["result_name"].isin(BIOMETRIC_COLS)]
@@ -766,8 +838,9 @@ def build_vitals_task(study_to_h5):
         logging.warning(f"  vitalsign.csv.gz 없음 ({VITAL_CSV}) — 건너뜀")
         return
 
-    df_ecg = _load_ecg_metadata()
+    df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
     subject_ids = set(df_ecg["subject_id"].unique())
+    logging.info(f"  diagnostic cohort: {len(df_ecg):,} ECGs / {len(subject_ids):,} patients")
 
     vital = pd.read_csv(VITAL_CSV)
     vital = vital[["subject_id", "stay_id", "charttime",
@@ -844,8 +917,9 @@ def build_labvalues_task(study_to_h5):
         logging.warning(f"  labevents.csv.gz 또는 d_labitems.csv.gz 없음 — 건너뜀")
         return
 
-    df_ecg = _load_ecg_metadata()
+    df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
     subject_ids = set(df_ecg["subject_id"].unique())
+    logging.info(f"  diagnostic cohort: {len(df_ecg):,} ECGs / {len(subject_ids):,} patients")
 
     # 1. labitems 화이트리스트
     dflabitems = pd.read_csv(D_LABITEMS_CSV)
