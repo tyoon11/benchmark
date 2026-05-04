@@ -40,11 +40,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Conda 자동 활성화 (가능 시)
-if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] && command -v conda >/dev/null 2>&1; then
+# Conda 자동 활성화 — tykim 환경 사용 (project convention)
+if command -v conda >/dev/null 2>&1; then
   source "$(conda info --base)/etc/profile.d/conda.sh"
-  # tykim 환경이 있으면 사용, 없으면 default 유지
-  conda activate tykim 2>/dev/null || true
+  if [[ "${CONDA_DEFAULT_ENV:-}" != "tykim" ]]; then
+    conda activate tykim 2>/dev/null || echo "⚠ conda env 'tykim' 활성화 실패 — 현재 env 유지"
+  fi
 fi
 echo "[$(date '+%H:%M:%S')] python: $(which python)"
 python -c "import pandas, numpy" || { echo "❌ pandas/numpy 없음"; exit 1; }
