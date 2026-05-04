@@ -1,0 +1,36 @@
+# MIMIC-IV-ECG Lab values (regression, 18 outputs)
+# 원본 paper Table: 88,448 samples × 18 outputs
+# Sources: labevents.csv.gz + d_labitems.csv.gz + chartevents.csv.gz 보강
+# Window: ECG-time 기준 closest 1시간 매칭
+data:
+  batch_size: 64
+  h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
+  label_csv: labels/mimic_labvalues_paper_labels.csv
+  label_cols:
+    - PT
+    - Albumin
+    - "Anion Gap"
+    - Bicarbonate
+    - "Bilirubin, Total"
+    - "Calcium, Total"
+    - Creatinine
+    - Ferritin
+    - "Urea Nitrogen"
+    - Hematocrit
+    - Hemoglobin
+    - Lymphocytes
+    - MCHC
+    - RDW
+    - "Red Blood Cells"
+    - RDW-SD
+    - "Creatine Kinase (CK)"
+    - NTproBNP
+  normalize: false
+  num_workers: 8
+  table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
+  target_fs: 500
+  target_length: 5000
+task:
+  name: mimic_labvalues
+  num_classes: 18
+  task_type: regression

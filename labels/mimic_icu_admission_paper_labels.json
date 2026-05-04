@@ -1,0 +1,10 @@
+{
+  "dataset": "mimic_icu_admission",
+  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 2 ICU columns (icu_24h: 24시간 내 ICU 입실, icu_stay: 동일 stay 내 ICU 입실).",
+  "task_type": "multi-label-binary",
+  "n_labels": 2,
+  "labels": {
+    "deterioration_icu_24h": "icu_24h",
+    "deterioration_icu_stay": "icu_stay"
+  }
+}

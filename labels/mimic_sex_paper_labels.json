@@ -1,0 +1,9 @@
+{
+  "dataset": "mimic_sex",
+  "source": "records_w_diag_icd10.csv (gender=M→1, F→0)",
+  "task_type": "binary",
+  "n_labels": 1,
+  "labels": {
+    "is_male": "is_male"
+  }
+}

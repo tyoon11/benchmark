@@ -1,0 +1,15 @@
+{
+  "dataset": "mimic_mortality",
+  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 7 mortality horizons (1d/7d/28d/90d/180d/365d/stay).",
+  "task_type": "multi-label-binary",
+  "n_labels": 7,
+  "labels": {
+    "deterioration_mortality_1d": "mortality_1d",
+    "deterioration_mortality_7d": "mortality_7d",
+    "deterioration_mortality_28d": "mortality_28d",
+    "deterioration_mortality_90d": "mortality_90d",
+    "deterioration_mortality_180d": "mortality_180d",
+    "deterioration_mortality_365d": "mortality_365d",
+    "deterioration_mortality_stay": "mortality_stay"
+  }
+}

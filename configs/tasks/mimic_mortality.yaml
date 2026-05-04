@@ -1,0 +1,19 @@
+# MIMIC-IV-ECG Mortality (binary, simplified)
+# 원본 paper Table: 17,639 samples × 7 outputs (multi-horizon: in-hospital/30-day/6-mo/...)
+# 사용자 raw에 mds_ed.csv 부재 → records_w_diag_icd10.csv의 'dod' 존재 여부로 단순화 (1-class).
+# 정확한 paper 재현이 필요하면 mds_ed.csv를 다운로드해 별도 구현 필요.
+data:
+  batch_size: 64
+  h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
+  label_csv: labels/mimic_mortality_paper_labels.csv
+  label_cols:
+    - is_deceased
+  normalize: false
+  num_workers: 8
+  table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
+  target_fs: 500
+  target_length: 5000
+task:
+  name: mimic_mortality
+  num_classes: 1
+  task_type: binary

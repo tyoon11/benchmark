@@ -1,0 +1,15 @@
+{
+  "dataset": "mimic_ecg_features",
+  "source": "machine_measurements.csv (RR/QRS/QT/QTc/P_axis/QRS_axis/T_axis), outlier 제거 후 raw 값",
+  "task_type": "regression",
+  "n_labels": 7,
+  "labels": {
+    "RR": "RR",
+    "QRS": "QRS",
+    "QT": "QT",
+    "QTc": "QTc",
+    "P_wave_axis": "P_wave_axis",
+    "QRS_axis": "QRS_axis",
+    "T_wave_axis": "T_wave_axis"
+  }
+}

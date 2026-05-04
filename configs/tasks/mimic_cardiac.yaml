@@ -1,0 +1,15 @@
+# MIMIC-IV-ECG Cardiac discharge diagnoses (multi-label, ICD-10 chapter IX)
+# 원본 paper Table: 114,355 samples × 158 outputs
+# 사용자 raw 부분집합 (~14k ED ECGs)이라 라벨 수 ≪ paper. 로직 동일.
+data:
+  batch_size: 64
+  h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
+  label_csv: labels/mimic_cardiac_paper_labels.csv
+  normalize: false
+  num_workers: 8
+  table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
+  target_fs: 500
+  target_length: 5000
+task:
+  name: mimic_cardiac
+  num_classes: 6

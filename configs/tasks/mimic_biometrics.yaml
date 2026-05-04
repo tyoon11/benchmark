@@ -1,0 +1,21 @@
+# MIMIC-IV-ECG Biometrics (regression, 3 outputs)
+# 원본 paper Table: 119,214 samples × 3 outputs
+# Sources: omr.csv.gz + chartevents.csv.gz 보강
+# Window: ECG-time 기준 closest 30일 매칭
+data:
+  batch_size: 64
+  h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
+  label_csv: labels/mimic_biometrics_paper_labels.csv
+  label_cols:
+    - "Height (Inches)"
+    - "Weight (Lbs)"
+    - "BMI (kg/m2)"
+  normalize: false
+  num_workers: 8
+  table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
+  target_fs: 500
+  target_length: 5000
+task:
+  name: mimic_biometrics
+  num_classes: 3
+  task_type: regression

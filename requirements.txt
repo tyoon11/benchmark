@@ -26,6 +26,7 @@ omegaconf               # CPC checkpoint pickle이 OmegaConf 타입 포함
 hydra-core              # CPC load_model_from_config (선택)
 fastcore                # ECGFM-KED의 fastcore.foundation 사용
 fastai                  # ECGFM-KED의 fastai.layers / fastai.core
+ipython                 # fastprogress(fastai 의존)가 IPython.display를 직접 import
 safetensors             # HuBERT-ECG checkpoint 포맷
 transformers            # HuBERT-ECG의 HuBERT backbone
 biosppy                 # HuBERT-ECG preprocessing의 bandpass filter

@@ -1,0 +1,9 @@
+{
+  "dataset": "mimic_age",
+  "source": "records_w_diag_icd10.csv (age in years at ECG time)",
+  "task_type": "regression",
+  "n_labels": 1,
+  "labels": {
+    "age": "age"
+  }
+}
