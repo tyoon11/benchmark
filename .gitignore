@@ -10,5 +10,10 @@ results/
 .idea/
 
 # 100MB+ 라벨 (다른 서버에서 raw로 재생성)
+labels/mimic_cardiac_paper_labels.csv
 labels/mimic_noncardiac_paper_labels.csv
 labels/_cache/
+labels/_logs/
+
+# 빌드 cache 흔적
+back_run.sh

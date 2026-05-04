@@ -1,0 +1,14 @@
+{
+  "dataset": "mimic_vitals",
+  "source": "vitalsign.csv.gz (HR/RR/BP/Temp/SpO2) + chartevents 보강, ECG-time 기준 closest 1시간 매칭. mimic_preprocessing.py:120-122,307-339,388-396 재현.",
+  "task_type": "regression",
+  "n_labels": 6,
+  "labels": {
+    "dbp": "dbp",
+    "heartrate": "heartrate",
+    "o2sat": "o2sat",
+    "resprate": "resprate",
+    "sbp": "sbp",
+    "temperature": "temperature"
+  }
+}

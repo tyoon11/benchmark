@@ -1,8 +1,8 @@
 # ECG Downstream Benchmark
 
-ECG encoder를 paper-canonical 17개 임상 task에 plug-in해서 Linear Probe / Attention Probe / Full Finetune을 돌리는 self-contained 프레임워크.
+ECG encoder를 paper-canonical **28개 임상 task** (17 ECG interpretation + 11 MIMIC-IV-ECG)에 plug-in해서 Linear Probe / Attention Probe / Full Finetune을 돌리는 self-contained 프레임워크.
 
-논문 [*Benchmarking ECG FMs: A Reality Check Across Clinical Tasks*](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) 의 학습/평가 절차를 그대로 구현 — 인코더별 input window, train시 random crop augmentation, val/test시 multi-window mean aggregation, layer-dependent LR 모두 동일.
+논문 [*Benchmarking ECG FMs: A Reality Check Across Clinical Tasks*](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking) 의 학습/평가 절차를 그대로 구현 — 인코더별 input window, train시 random crop augmentation, val/test시 multi-window mean aggregation, layer-dependent LR, **multi-task type (binary / multi-label-binary / regression) + NaN masking** 모두 paper와 동일.
 
 ---
 
@@ -36,7 +36,7 @@ paper 코드(`clinical_ts` subset)는 [`src/external/`](src/external/) 안에 bu
 | HuBERT-ECG | 5.0s @ 100Hz | 93.1M | `src.encoders.hubert_ecg.HuBERTECGEncoder` |
 | ECG-FM | 5.0s @ 500Hz | 90.4M | `src.encoders.ecg_fm.ECGFMEncoder` |
 
-### 17 paper-canonical tasks + 7 variants
+### 28 paper-canonical tasks + 7 variants
 
 ```
 Adult ECG interpretation:    ptb, ningbo, cpsc2018, cpsc_extra, georgia,
@@ -45,11 +45,28 @@ Adult ECG interpretation:    ptb, ningbo, cpsc2018, cpsc_extra, georgia,
 Pediatric ECG interp:        zzu_pecg
 Cardiac structure & func:    echonext              (NumPy loader)
 
+MIMIC-IV-ECG (11 tasks):
+  Discharge diagnoses:       mimic_cardiac, mimic_noncardiac
+  Patient characteristics:   mimic_sex, mimic_age
+  ECG features:              mimic_ecg_features    (regression × 7)
+  Acute care (MDS-ED):       mimic_deterioration, mimic_mortality, mimic_icu_admission
+  Biometrics/Vitals/Labs:    mimic_biometrics, mimic_vitals, mimic_labvalues  (regression)
+
 Variants:                    code15_diag, code15_diag_jepa, cpsc2021_af,
                              physionet_all, ptbxl_super_jepa
 ```
 
-Task 정의는 [`configs/tasks/*.yaml`](configs/tasks/).
+Task 정의는 [`configs/tasks/*.yaml`](configs/tasks/). MIMIC 라벨 생성은 아래 ["MIMIC label build"](#mimic-label-build) 참조.
+
+### Task types (paper main_lite_ecg.py:92-139 재현)
+
+| `task_type` | Loss | Eval metric | NaN 처리 | 사용 task 예 |
+|---|---|---|---|---|
+| `binary` (default) | BCEWithLogits | AUROC / AUPRC / F1 | NaN→0 (negative) | ptbxl_*, chapman, sex, cardiac, … |
+| `multi-label-binary` | masked BCE | AUROC / AUPRC / F1 | NaN 마스킹 (paper:114) | mortality, deterioration, icu_admission |
+| `regression` | masked L1 (MAE) | MAE / MSE / RMSE / R² / neg_MAE | NaN 마스킹 (paper:128) | age, ecg_features, biometrics, vitals, labvalues |
+
+`task.task_type` 을 task yaml에 명시. 미지정 시 `binary` 적용.
 
 ### 4 eval modes
 
@@ -200,7 +217,7 @@ class MyModelEncoder(nn.Module):
 | **데이터 split** | `strat_fold` 기반 자동 split (paper 동일) | 새 task 만들 땐 `strat_fold` 컬럼 포함 |
 | **라벨셋** | `labels/` 안의 paper-canonical 라벨 자동 사용 | task yaml의 `label_csv` 만 잘 지정 |
 | **Optimizer/Schedule** | AdamW + lr=1e-3 + const + 100 epoch (paper 동일) | 다른 모델만 다른 lr 쓰면 부정 비교 — default 유지 |
-| **Loss** | BCEWithLogits multi-label (paper 동일) | 인코더 출력 dim이 task `num_classes`와 일치만 보장 |
+| **Loss** | task_type별 자동: BCE / masked BCE / masked L1 (paper 동일) | 인코더 출력 dim이 task `num_classes`와 일치만 보장 |
 | **Multi-window train+agg** | `chunk_seconds` 선언만 하면 자동 (paper §3.3) | **반드시 paper run.sh와 동일한 input_size × fs_model** |
 | **Layer-LR (finetune)** | head=lr, late=0.1lr, early=0.01lr (paper 동일) | `get_layer_groups()` 미구현시 head + 전체 2그룹 fallback |
 | **Eval modes (4)** | linear_probe / attention_probe / finetune_linear / finetune_attention | head는 framework 가 동일 (V-JEPA learnable query, heads=16) |
@@ -320,8 +337,15 @@ $ECG_DATA_ROOT/
 │   ├── code15/v2.0/         # CODE-15%
 │   ├── sph/v2.0/            # SPH
 │   ├── ZZU-pECG/v2.0/       # ZZU pECG
+│   ├── mimic4/v2.0/         # MIMIC-IV-ECG (~800k records)
 │   └── cpsc2021/v2.0/       # CPSC2021 (variant only)
-└── raw/physionet.org/files/echonext/1.1.0/    # EchoNext NumPy
+└── raw/physionet.org/files/
+    ├── echonext/1.1.0/                                    # EchoNext NumPy
+    ├── mimic-iv-ecg/1.0/                                  # machine_measurements.csv
+    ├── mimic-iv-ecg-ext-icd-labels/1.0.1/                 # records_w_diag_icd10.csv
+    ├── mimic-iv-ed/2.2/ed/                                # vitalsign, edstays
+    ├── mimiciv/3.1/{hosp,icu}/                            # omr, labevents, chartevents, ...
+    └── multimodal-emergency-benchmark/1.0.0/              # mds_ed.csv (MDS-ED)
 
 $ECG_CKPT_ROOT/
 ├── ecg_founder/12_lead_ECGFounder.pth
@@ -357,6 +381,54 @@ $ECG_CKPT_ROOT/
 
 ---
 
+## MIMIC label build
+
+MIMIC-IV-ECG 11개 task는 raw 데이터(PhysioNet credentialed) 로부터 [`scripts/build_mimic_labels.py`](scripts/build_mimic_labels.py)로 생성. 원본 [`mimic_preprocessing.py`](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking/blob/main/mimic_preprocessing.py) 1:1 재현.
+
+### 필요한 raw 파일 (11개)
+
+| 데이터셋 | 페이지 | 파일 |
+|---|---|---|
+| MIMIC-IV-ECG (1.0) | https://physionet.org/content/mimic-iv-ecg/1.0/ | `machine_measurements.csv`, `record_list.csv` |
+| MIMIC-IV-ECG-ICD (1.0.1) | https://physionet.org/content/mimic-iv-ecg-ext-icd-labels/1.0.1/ | `records_w_diag_icd10.csv` |
+| MIMIC-IV-ED (2.2) | https://physionet.org/content/mimic-iv-ed/ | `ed/edstays.csv.gz`, `ed/vitalsign.csv.gz` |
+| MIMIC-IV (3.1) hosp/ | https://physionet.org/content/mimiciv/3.1/ | `admissions.csv.gz`, `omr.csv.gz`, `labevents.csv.gz`, `d_labitems.csv.gz` |
+| MIMIC-IV (3.1) icu/ | https://physionet.org/content/mimiciv/3.1/ | `chartevents.csv.gz`, `d_items.csv.gz`, `icustays.csv.gz` |
+| MDS-ED (1.0.0) | https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/ | `mds_ed.csv` |
+
+배치 위치: `$ECG_DATA_ROOT/raw/physionet.org/files/<dataset>/...` (build_mimic_labels.py 상단 경로 참조).
+
+### 병렬 빌드 (3-stage)
+
+```bash
+./run_build_mimic_labels.sh
+```
+
+Stage 1 (병렬, ~2분): diagnostic, sex, ecg_features, deterioration, mortality, icu_admission  
+Stage 2 (단독, ~40분): biometrics — chartevents.csv.gz (~30GB) 청크 필터 + 캐시 생성  
+Stage 3 (병렬, ~15분): vitals + labvalues (캐시 재사용)
+
+전체 ~1시간. 각 task 로그 → `labels/_logs/build_<task>.log`.
+
+### 결과
+
+```
+labels/
+├── mimic_cardiac_paper_labels.csv             (114k rows × 158 labels — paper Table 99.7%↑ match)
+├── mimic_noncardiac_paper_labels.csv          (178k × 918)
+├── mimic_sex_paper_labels.csv                 (binary)
+├── mimic_age_paper_labels.csv                 (regression)
+├── mimic_ecg_features_paper_labels.csv        (regression × 7)
+├── mimic_deterioration_paper_labels.csv       (multi-label-binary × 6)
+├── mimic_mortality_paper_labels.csv           (multi-label-binary × 7)
+├── mimic_icu_admission_paper_labels.csv       (multi-label-binary × 2)
+├── mimic_biometrics_paper_labels.csv          (regression × 3)
+├── mimic_vitals_paper_labels.csv              (regression × 6)
+└── mimic_labvalues_paper_labels.csv           (regression × 18)
+```
+
+---
+
 ## Project layout
 
 ```
@@ -364,21 +436,22 @@ benchmark/
 ├── run.py                          # 단일 실험 entrypoint
 ├── run_full_benchmark.sh           # 전 모델 × 전 태스크 × 전 모드 병렬
 ├── run_parallel_tasks.sh           # 단일 모델 × 전 태스크
+├── run_build_mimic_labels.sh       # MIMIC 11개 task 라벨 3-stage 병렬 빌드
 ├── configs/
 │   ├── default.yaml                # 기본 학습 설정 (lr, epochs, head)
 │   ├── models.sh                   # 모델 레지스트리
-│   └── tasks/                      # 24개 태스크 yaml (paper 17 + variants 7)
+│   └── tasks/                      # 35+개 태스크 yaml (paper 28 + variants 7)
 ├── src/
-│   ├── dataset.py                  # H5ECGDataset (chunk + ecg_id + random_crop)
+│   ├── dataset.py                  # H5ECGDataset (task_type 분기, NaN 보존)
 │   ├── dataset_numpy.py            # EchoNextDataset
 │   ├── wrapper.py                  # DownstreamWrapper (encoder-agnostic)
 │   ├── heads.py                    # Linear / V-JEPA Attention / MLP heads
-│   ├── trainer.py                  # eval시 ecg_id 평균집계
-│   ├── metrics.py                  # AUROC / AUPRC / F1
+│   ├── trainer.py                  # BCE / masked-BCE / masked-L1 자동 분기
+│   ├── metrics.py                  # AUROC / AUPRC / F1 + MAE / MSE / RMSE / R²
 │   ├── encoders/                   # 8 encoder adapters
 │   └── external/clinical_ts/       # paper backbone subset (bundled)
 ├── labels/                         # paper-canonical 라벨 정의 (csv + json)
-├── scripts/                        # 라벨/fold 빌드 + UMAP
+├── scripts/                        # 라벨/fold 빌드 + UMAP + build_mimic_labels.py
 └── results/                        # 실험 결과 (gitignore)
 ```
 
@@ -386,5 +459,7 @@ benchmark/
 
 ## References
 
-- 논문: *Benchmarking ECG FMs: A Reality Check Across Clinical Tasks* (ICLR 2026 submission)
+- 논문: *Benchmarking ECG FMs: A Reality Check Across Clinical Tasks* (ICLR 2026)
 - Bundled paper code: [AI4HealthUOL/ECG-FM-Benchmarking](https://github.com/AI4HealthUOL/ECG-FM-Benchmarking)
+- MDS-ED dataset (Multimodal Decision Support — Emergency Department): https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/
+- MIMIC-IV-ECG-ICD labels: https://physionet.org/content/mimic-iv-ecg-ext-icd-labels/1.0.1/
