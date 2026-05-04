@@ -1,6 +1,6 @@
-# MIMIC-IV-ECG Non-cardiac discharge diagnoses (multi-label, ICD-10 non-IX)
-# 원본 paper Table: 178,163 samples × 918 outputs
-# 사용자 raw 부분집합이라 라벨 수 ≪ paper. 로직 동일.
+# MIMIC-IV-ECG Non-cardiac discharge diagnoses (multi-label binary, ICD-10 non-IX)
+# Paper Table: 178,163 samples × 918 outputs
+# 사용자 결과: 180,710 rows × 918 labels (paper +1.4%, output 100% match)
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
@@ -12,4 +12,5 @@ data:
   target_length: 5000
 task:
   name: mimic_noncardiac
-  num_classes: 13
+  num_classes: 918
+  task_type: binary
