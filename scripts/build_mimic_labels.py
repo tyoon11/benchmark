@@ -320,22 +320,29 @@ def save_regression_csv(name, df, label_cols, source_desc):
 # Tasks
 # ═══════════════════════════════════════════════════════════════
 def build_diagnostic_tasks(study_to_h5):
-    """Cardiac / Non-cardiac discharge diagnoses (multi-label)."""
+    """Cardiac / Non-cardiac discharge diagnoses (multi-label).
+
+    원본 prepare_mimic_ecg(finetune_dataset='mimic_ed_all_edfirst_all_2000_5A')
+    의 정확한 순서:
+      1. 전체 records_w_diag_icd10.csv 에서 라벨 추출 → lbl_itos 결정
+         (= mimic_ecg_preprocessing.py:120-127, df_diags 전체 사용)
+      2. ED ECG로 train subset 필터링 (subsettrain='ed')
+      3. ED first-ECG-per-stay로 test subset 필터링 (subsettest='edfirst')
+    핵심: lbl_itos는 ED 필터 BEFORE 가 아닌 AFTER 추출되어야 paper의 158/918 라벨 set 재현.
+    """
     logging.info("\n=== Diagnostic (cardiac / non-cardiac) ===")
     df = pd.read_csv(ICD_CSV, low_memory=False)
     df = parse_diag_lists(df, ["all_diag_all", "ed_diag_ed", "ed_diag_hosp",
                                 "hosp_diag_hosp", "all_diag_hosp"])
     logging.info(f"  ICD csv 총 {len(df):,} rows")
 
-    # 원본 finetune_dataset='mimic_ed_all_edfirst_all_2000_5A':
-    #   subsettrain=ed (ED ECGs only), labelsettrain=all
-    #   subsettest=edfirst (first ECG per ED stay), labelsettest=all
-    # 라벨 추출은 ED 진단 전체에 대해 수행 (paper와 동일).
-    df_ed = df[df["ecg_taken_in_ed"] == True].copy()
-    logging.info(f"  ECG taken in ED: {len(df_ed):,}")
+    # 1. 전체 corpus에서 라벨 추출 (paper 원본 동일)
+    df_lbl, lbl_itos = prepare_diagnostic_labels(df, label_col="all_diag_all")
+    logging.info(f"  전체 corpus Labels (≥{MIN_CNT}): {len(lbl_itos)}")
 
-    df_lbl, lbl_itos = prepare_diagnostic_labels(df_ed, label_col="all_diag_all")
-    logging.info(f"  Labels (≥{MIN_CNT}): {len(lbl_itos)}")
+    # 2. ED 필터 (subsettrain='ed' / subsettest='edfirst' 의 공통 제약)
+    df_lbl = df_lbl[df_lbl["ecg_taken_in_ed"] == True].copy()
+    logging.info(f"  ECG taken in ED: {len(df_lbl):,}")
 
     # cardiac (chapter IX) vs non-cardiac (other chapters)
     cardiac = [c for c in lbl_itos if get_chapter_prefix(c) == "I"]

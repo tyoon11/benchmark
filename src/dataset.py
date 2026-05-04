@@ -72,6 +72,7 @@ class H5ECGDataset(Dataset):
         fold_ids:      list = None,
         mean:          np.ndarray = None,
         std:           np.ndarray = None,
+        task_type:     str = "binary",  # 'binary' | 'regression' | 'multi-label-binary'
     ):
         self.h5_root = Path(h5_root)
         self.target_fs = target_fs
@@ -79,6 +80,7 @@ class H5ECGDataset(Dataset):
         self.normalize = normalize
         self.mean = mean
         self.std = std
+        self.task_type = task_type
 
         # 메타 테이블 로드
         self.table = pd.read_csv(table_csv, low_memory=False)
@@ -205,12 +207,31 @@ class H5ECGDataset(Dataset):
         # NaN → 0
         sig = np.nan_to_num(sig, nan=0.0)
 
-        # 라벨
+        # 라벨 — task_type 분기
         if self.has_labels:
-            label = np.array([
-                1.0 if str(row.get(c, "")).lower() in ("true", "1", "1.0") else 0.0
-                for c in self.label_cols
-            ], dtype=np.float32)
+            if self.task_type == "regression":
+                # numeric 값을 float32로, NaN 보존 (paper main_lite_ecg.py:122-133 mask용)
+                label = np.array([
+                    float(row.get(c)) if pd.notna(row.get(c)) else np.nan
+                    for c in self.label_cols
+                ], dtype=np.float32)
+            elif self.task_type == "multi-label-binary":
+                # binary 0/1, NaN 보존 (paper:114-118 mask용 — mds_ed의 missing label 처리)
+                vals = []
+                for c in self.label_cols:
+                    v = row.get(c)
+                    if pd.isna(v):
+                        vals.append(np.nan)
+                    else:
+                        s = str(v).lower()
+                        vals.append(1.0 if s in ("true", "1", "1.0") else 0.0)
+                label = np.array(vals, dtype=np.float32)
+            else:
+                # binary (default) — 모든 NaN을 0으로 (다중-label, 결측은 negative로 간주)
+                label = np.array([
+                    1.0 if str(row.get(c, "")).lower() in ("true", "1", "1.0") else 0.0
+                    for c in self.label_cols
+                ], dtype=np.float32)
         else:
             label = np.zeros(1, dtype=np.float32)
 
@@ -293,6 +314,7 @@ def build_dataloaders(cfg, split="train"):
         fold_ids=cfg.get(f"{split}_folds"),
         mean=cfg.get("mean"),
         std=cfg.get("std"),
+        task_type=cfg.get("task_type", "binary"),
     )
     loader = DataLoader(
         ds,

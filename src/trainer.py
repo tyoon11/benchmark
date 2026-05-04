@@ -66,8 +66,17 @@ class DownstreamTrainer:
         self.warmup_epochs = warmup
         self.lr = lr
 
-        # Loss
-        self.criterion = nn.BCEWithLogitsLoss()
+        # Loss — task_type 분기 (paper main_lite_ecg.py:92-139 재현)
+        self.task_type = str(self.cfg.get("task_type", "binary"))
+        if self.task_type == "regression":
+            # paper: F.l1_loss (MAE) — MSE 아님
+            self._loss_fn = self._regression_loss
+        elif self.task_type == "multi-label-binary":
+            # NaN 마스킹 BCE — mds_ed의 missing label 처리
+            self._loss_fn = self._masked_bce_loss
+        else:
+            # 'binary' 기본 — multi-label BCE (전체 라벨 0/1)
+            self._loss_fn = nn.BCEWithLogitsLoss()
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -110,32 +119,41 @@ class DownstreamTrainer:
             if self.scheduler is not None and epoch >= self.warmup_epochs:
                 self.scheduler.step()
 
-            # Logging (rank 0만)
+            # Logging (rank 0만) — task_type별 primary metric
             if self.is_main:
-                auroc = val_metrics.get("auroc_macro", 0)
+                if self.task_type == "regression":
+                    primary_key = "neg_mae_macro"   # neg_MAE (높을수록 좋음, MAE↓)
+                    log_label = "neg_mae"
+                else:
+                    primary_key = "auroc_macro"
+                    log_label = "auroc"
+                primary = val_metrics.get(primary_key, 0)
                 lr_now = self.optimizer.param_groups[0]["lr"]
                 logger.info(
                     f"Epoch {epoch+1}/{self.epochs} | "
-                    f"loss={train_loss:.4f} | val_auroc={auroc:.4f} | lr={lr_now:.2e}"
+                    f"loss={train_loss:.4f} | val_{log_label}={primary:.4f} | lr={lr_now:.2e}"
                 )
 
-                if auroc > self.best_metric:
-                    self.best_metric = auroc
+                if primary > self.best_metric:
+                    self.best_metric = primary
                     self.best_epoch = epoch + 1
                     torch.save(self.model_unwrapped.state_dict(), self.save_dir / "best.pt")
 
         if self.is_main:
-            logger.info(f"Best val AUROC: {self.best_metric:.4f} at epoch {self.best_epoch}")
+            log_label = "neg_mae" if self.task_type == "regression" else "AUROC"
+            logger.info(f"Best val {log_label}: {self.best_metric:.4f} at epoch {self.best_epoch}")
 
         # Test
         if self.test_loader and self.is_main:
             self.model_unwrapped.load_state_dict(
                 torch.load(self.save_dir / "best.pt", weights_only=True))
             test_metrics = self._eval_epoch(self.test_loader, "test")
-            logger.info(f"Test AUROC: {test_metrics.get('auroc_macro', 0):.4f}")
+            primary_key = "neg_mae_macro" if self.task_type == "regression" else "auroc_macro"
+            log_label = "neg_mae" if self.task_type == "regression" else "AUROC"
+            logger.info(f"Test {log_label}: {test_metrics.get(primary_key, 0):.4f}")
             return test_metrics
 
-        return {"best_val_auroc": self.best_metric, "best_epoch": self.best_epoch}
+        return {"best_val": self.best_metric, "best_epoch": self.best_epoch}
 
     def _train_epoch(self, epoch):
         """1 epoch 학습"""
@@ -150,7 +168,7 @@ class DownstreamTrainer:
             label = batch["label"].to(self.device)
 
             logits = self.model(signal)
-            loss = self.criterion(logits, label)
+            loss = self._loss_fn(logits, label)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -188,7 +206,11 @@ class DownstreamTrainer:
             label = batch["label"]
 
             logits = self.model(signal)
-            preds = torch.sigmoid(logits).cpu().numpy()
+            # regression: raw logits, classification: sigmoid 확률
+            if self.task_type == "regression":
+                preds = logits.cpu().numpy()
+            else:
+                preds = torch.sigmoid(logits).cpu().numpy()
 
             all_preds.append(preds)
             all_targets.append(label.numpy())
@@ -226,18 +248,20 @@ class DownstreamTrainer:
                 all_preds = agg_preds
                 all_targets = agg_targets
 
-            metrics = evaluate_all(all_targets, all_preds, self.label_names)
+            metrics = evaluate_all(all_targets, all_preds, self.label_names,
+                                    task_type=self.task_type)
             result_path = self.save_dir / f"{prefix}_metrics.txt"
             with open(result_path, "w") as f:
                 for k, v in sorted(metrics.items()):
                     f.write(f"{k}: {v}\n")
 
-        # DDP: 메트릭을 broadcast (다른 rank에서도 best_metric 비교용)
+        # DDP: 메트릭을 broadcast — task_type별 primary metric
         if self.use_ddp:
-            auroc = torch.tensor(metrics.get("auroc_macro", 0.0), device=self.device)
-            dist.broadcast(auroc, src=0)
+            primary_key = "neg_mae_macro" if self.task_type == "regression" else "auroc_macro"
+            primary = torch.tensor(metrics.get(primary_key, 0.0), device=self.device)
+            dist.broadcast(primary, src=0)
             if not self.is_main:
-                metrics = {"auroc_macro": auroc.item()}
+                metrics = {primary_key: primary.item()}
 
         return metrics
 
@@ -286,3 +310,31 @@ class DownstreamTrainer:
             return preds_out, targets_out, ids_out
 
         return preds, targets, ids
+
+    # ── Loss helpers (paper main_lite_ecg.py:92-139 재현) ──────────────
+    @staticmethod
+    def _masked_bce_loss(logits, targets):
+        """NaN을 가진 multi-label binary용 — NaN 위치는 loss에 미반영.
+        paper main_lite_ecg.py:114-118 재현 (per-position mask).
+        """
+        import torch.nn.functional as F
+        valid = ~torch.isnan(targets)
+        if not valid.any():
+            return torch.zeros(1, device=logits.device, requires_grad=True).squeeze()
+        # NaN 위치는 0으로 대체하여 BCE 입력 가능, mask로 제거
+        targets_safe = torch.where(valid, targets, torch.zeros_like(targets))
+        loss_per_elem = F.binary_cross_entropy_with_logits(
+            logits, targets_safe, reduction="none"
+        )
+        return (loss_per_elem * valid.float()).sum() / valid.float().sum().clamp(min=1.0)
+
+    @staticmethod
+    def _regression_loss(logits, targets):
+        """L1 loss (MAE) with NaN masking. paper main_lite_ecg.py:99,128-133 재현."""
+        import torch.nn.functional as F
+        valid = ~torch.isnan(targets)
+        if not valid.any():
+            return torch.zeros(1, device=logits.device, requires_grad=True).squeeze()
+        targets_safe = torch.where(valid, targets, torch.zeros_like(targets))
+        loss_per_elem = F.l1_loss(logits, targets_safe, reduction="none")
+        return (loss_per_elem * valid.float()).sum() / valid.float().sum().clamp(min=1.0)

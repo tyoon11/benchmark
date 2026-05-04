@@ -1,13 +1,13 @@
-# MIMIC-IV-ECG ICU admission (binary, simplified — hospital admission proxy)
-# 원본 paper Table: 18,690 samples × 2 outputs (ICU-specific from chartevents/mds_ed)
-# 사용자 raw에 chartevents.csv.gz / mds_ed.csv 부재 → ED disposition='ADMITTED' OR ecg_taken_in_hosp 으로 대체.
-# 정확한 paper 재현이 필요하면 chartevents.csv.gz와 d_items.csv.gz를 다운로드해 ICU stay 추출 필요.
+# MIMIC-IV-ECG ICU admission (multi-label binary with NaN, 2 outputs)
+# 원본 paper Table: 18,690 samples × 2 outputs
+# Source: mds_ed.csv (multimodal-emergency-benchmark)
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
   label_csv: labels/mimic_icu_admission_paper_labels.csv
   label_cols:
-    - is_admitted
+    - deterioration_icu_24h
+    - deterioration_icu_stay
   normalize: false
   num_workers: 8
   table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
@@ -15,5 +15,5 @@ data:
   target_length: 5000
 task:
   name: mimic_icu_admission
-  num_classes: 1
-  task_type: binary
+  num_classes: 2
+  task_type: multi-label-binary

@@ -428,6 +428,10 @@ def main():
         logging.info(f"Train: {len(train_ds):,} | Val: {len(val_ds):,}"
                      + (f" | Test: {len(test_loader.dataset):,}" if test_loader else ""))
 
+    # task_type 전달 (binary / multi-label-binary / regression)
+    task_type = task_cfg.get("task_type", "binary")
+    data_cfg["task_type"] = task_type
+
     # ── Train ──
     trainer_cfg = {
         **train_cfg,
@@ -437,6 +441,7 @@ def main():
         "use_ddp": use_ddp,
         "rank": rank,
         "world_size": world_size,
+        "task_type": task_type,
     }
     trainer = DownstreamTrainer(model, train_loader, val_loader, test_loader, trainer_cfg)
     results = trainer.train()
