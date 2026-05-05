@@ -459,6 +459,7 @@ def main():
             val_size=len(val_ds),
             test_size=len(test_loader.dataset) if test_loader else 0,
             results=results,
+            task_type=task_type,
         )
         logging.info(f"Results saved to: {save_dir}")
 
@@ -467,10 +468,15 @@ def main():
 
 
 def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
-                      save_dir, train_size, val_size, test_size, results):
+                      save_dir, train_size, val_size, test_size, results,
+                      task_type="binary"):
     """
     각 실험 결과를 results_all.csv에 row로 추가 (thread-safe append).
     save_dir 상위 폴더(예: results/{timestamp}/)에 저장됩니다.
+
+    task_type별 metric 분기:
+      - binary / multi-label-binary: AUROC / AUPRC / F1
+      - regression: MAE / MSE / RMSE / R² / neg_MAE
     """
     from pathlib import Path
     import csv, fcntl
@@ -491,18 +497,26 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "model": model_name,
         "task": task,
+        "task_type": task_type,
         "eval_mode": eval_mode,
         "num_classes": num_classes,
         "train_size": train_size,
         "val_size": val_size,
         "test_size": test_size,
-        "best_val_auroc": results.get("best_val_auroc", float("nan")),
+        "best_val": results.get("best_val", results.get("best_val_auroc", float("nan"))),
         "best_epoch": results.get("best_epoch", -1),
+        # Classification metrics (binary / multi-label-binary)
         "test_auroc_macro": test_m.get("auroc_macro", float("nan")),
         "test_auroc_micro": test_m.get("auroc_micro", float("nan")),
         "test_auprc_macro": test_m.get("auprc_macro", float("nan")),
         "test_f1_macro":    test_m.get("f1_macro", float("nan")),
         "val_auroc_macro": val_m.get("auroc_macro", float("nan")),
+        # Regression metrics
+        "test_mae_macro":   test_m.get("mae_macro", float("nan")),
+        "test_mse_macro":   test_m.get("mse_macro", float("nan")),
+        "test_rmse_macro":  test_m.get("rmse_macro", float("nan")),
+        "test_r2_macro":    test_m.get("r2_macro", float("nan")),
+        "val_neg_mae_macro": val_m.get("neg_mae_macro", float("nan")),
         "save_dir": str(save_dir),
     }
 
