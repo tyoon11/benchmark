@@ -96,8 +96,15 @@ class H5ECGDataset(Dataset):
         if self.has_labels:
             label_df = pd.read_csv(label_csv, low_memory=False)
             key_cols = ["filepath"]
-            self.table = self.table.merge(label_df, on=key_cols, how="left",
+            n_before = len(self.table)
+            # inner join: 라벨이 있는 ECG만 학습에 사용
+            # (mimic4_table는 800k ECG 전체, 각 task의 cohort는 그 부분집합)
+            self.table = self.table.merge(label_df, on=key_cols, how="inner",
                                           suffixes=("", "_label"))
+            if n_before != len(self.table):
+                import logging
+                logging.info(f"  Label join: {n_before:,} → {len(self.table):,} rows "
+                             f"(라벨 있는 ECG만)")
 
             if label_cols is None:
                 # key가 아닌 모든 컬럼 = 라벨
