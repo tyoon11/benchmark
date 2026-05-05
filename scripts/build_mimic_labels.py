@@ -232,7 +232,7 @@ def sanitize(s):
 
 
 def save_multilabel_csv(name, df, label_col, lbl_itos, source_desc):
-    """multi-label binary CSV 저장."""
+    """multi-label binary CSV 저장. strat_fold 컬럼 포함 (paper split)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
@@ -240,7 +240,8 @@ def save_multilabel_csv(name, df, label_col, lbl_itos, source_desc):
     label_cols = [sanitize(l) for l in lbl_itos]
     label_set = set(lbl_itos)
 
-    out_df = df[["filepath"]].copy()
+    keep_meta = [c for c in ("filepath", "strat_fold", "fold") if c in df.columns]
+    out_df = df[keep_meta].copy()
     for j, col in enumerate(label_cols):
         target = lbl_itos[j]
         out_df[col] = df[label_col].apply(lambda x: target in x if isinstance(x, list) else False)
@@ -257,11 +258,12 @@ def save_multilabel_csv(name, df, label_col, lbl_itos, source_desc):
 
 
 def save_binary_csv(name, df, label_col, label_name, source_desc):
-    """단일 binary 컬럼 CSV 저장."""
+    """단일 binary 컬럼 CSV 저장. strat_fold 컬럼 포함."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
-    out_df = df[["filepath"]].copy()
+    keep_meta = [c for c in ("filepath", "strat_fold", "fold") if c in df.columns]
+    out_df = df[keep_meta].copy()
     out_df[label_name] = df[label_col].astype(bool)
     out_df.to_csv(out_csv, index=False)
     with open(out_json, "w") as f:
@@ -277,11 +279,12 @@ def save_binary_csv(name, df, label_col, label_name, source_desc):
 
 
 def save_multilabel_numeric_csv(name, df, label_cols, source_desc, label_descriptions=None):
-    """다변량 binary multi-label CSV 저장 (NaN 보존, 0/1 numeric)."""
+    """다변량 binary multi-label CSV 저장 (NaN 보존, 0/1 numeric). strat_fold 포함."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
-    out_df = df[["filepath"] + label_cols].copy()
+    keep_meta = [c for c in ("filepath", "strat_fold", "fold") if c in df.columns]
+    out_df = df[keep_meta + label_cols].copy()
     out_df.to_csv(out_csv, index=False)
     descs = label_descriptions or {c: c for c in label_cols}
     with open(out_json, "w") as f:
@@ -298,11 +301,12 @@ def save_multilabel_numeric_csv(name, df, label_cols, source_desc, label_descrip
 
 
 def save_regression_csv(name, df, label_cols, source_desc):
-    """다변량 regression CSV 저장 (값은 raw, NaN 보존)."""
+    """다변량 regression CSV 저장 (값은 raw, NaN 보존). strat_fold 포함."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
-    out_df = df[["filepath"] + label_cols].copy()
+    keep_meta = [c for c in ("filepath", "strat_fold", "fold") if c in df.columns]
+    out_df = df[keep_meta + label_cols].copy()
     out_df.to_csv(out_csv, index=False)
     with open(out_json, "w") as f:
         json.dump({
@@ -430,7 +434,7 @@ def build_sex_age_tasks(study_to_h5):
 
     df = pd.read_csv(ICD_CSV, low_memory=False,
                      usecols=["study_id", "gender", "age"])
-    df = df.merge(cohort[["study_id", "filepath"]],
+    df = df.merge(cohort[["study_id", "filepath", "strat_fold", "fold"]],
                   on="study_id", how="inner")
 
     # sex
@@ -473,7 +477,7 @@ def build_ecg_features_task(study_to_h5):
     # paper cohort intersection (mimic_preprocessing.py:420 is_diagnostic==1)
     cohort = get_diagnostic_cohort(study_to_h5)
     logging.info(f"  diagnostic cohort: {len(cohort):,}")
-    df = df.merge(cohort[["study_id", "filepath"]],
+    df = df.merge(cohort[["study_id", "filepath", "strat_fold", "fold"]],
                   on="study_id", how="inner")
 
     # 모든 feature가 NaN인 행 제거
@@ -501,6 +505,8 @@ def _load_mds_ed_with_filepath(study_to_h5, value_cols, restrict_to_cohort=True)
     df = pd.read_csv(MDS_ED_CSV, low_memory=False)
     keep = ["general_study_id", "general_subject_id", "general_strat_fold"] + value_cols
     df = df[keep].copy()
+    # paper의 split: general_strat_fold 0-17/18/19 (18/1/1)
+    df = df.rename(columns={"general_strat_fold": "strat_fold"})
     for c in value_cols:
         df[c] = df[c].replace(-999., np.nan)
     df["filepath"] = df["general_study_id"].apply(
@@ -731,17 +737,18 @@ def _load_chartevents_extract():
 
 
 def _load_ecg_metadata(study_to_h5=None, cohort_only=True):
-    """records_w_diag_icd10.csv → study_id, subject_id, ecg_time DataFrame.
+    """records_w_diag_icd10.csv → study_id, subject_id, ecg_time, strat_fold, fold DataFrame.
 
     cohort_only=True: paper is_diagnostic cohort에 한정
     (mimic_preprocessing.py:420 — biometrics/vitals/labvalues 모두 이 cohort).
+    strat_fold/fold는 paper의 18/1/1 split 위해 포함.
     """
     if cohort_only and study_to_h5 is not None:
         cohort = get_diagnostic_cohort(study_to_h5)
-        df = cohort[["study_id", "subject_id", "ecg_time"]].copy()
+        df = cohort[["study_id", "subject_id", "ecg_time", "strat_fold", "fold"]].copy()
     else:
         df = pd.read_csv(ICD_CSV, low_memory=False,
-                         usecols=["study_id", "subject_id", "ecg_time"])
+                         usecols=["study_id", "subject_id", "ecg_time", "strat_fold", "fold"])
     df["ecg_time"] = pd.to_datetime(df["ecg_time"])
     return df
 
@@ -798,7 +805,7 @@ def build_biometrics_task(study_to_h5):
 
     # ECG-time 기준 closest 30일 내 매칭 (mimic_preprocessing.py:378-386)
     omr_subset = omr[omr["result_name"].isin(BIOMETRIC_COLS)]
-    merged = df_ecg[["subject_id", "study_id", "ecg_time"]].merge(
+    merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         omr_subset, on="subject_id", how="left"
     )
     merged["time_diff"] = (merged["chartdate"] - merged["ecg_time"]).abs().dt.days
@@ -808,7 +815,7 @@ def build_biometrics_task(study_to_h5):
     )["time_diff"].idxmin()
     closest = merged.loc[closest_idx]
     wide = closest.pivot_table(
-        index=["study_id", "subject_id", "ecg_time"],
+        index=["study_id", "subject_id", "ecg_time", "strat_fold", "fold"],
         columns="result_name", values="result_value"
     ).reset_index()
 
@@ -876,7 +883,7 @@ def build_vitals_task(study_to_h5):
     vital_long["charttime"] = pd.to_datetime(vital_long["charttime"])
 
     # ECG-time 기준 closest 1시간 내 매칭 (mimic_preprocessing.py:388-396)
-    merged = df_ecg[["subject_id", "study_id", "ecg_time"]].merge(
+    merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         vital_long[["subject_id", "charttime", "result_name", "result_value"]],
         on="subject_id", how="left"
     )
@@ -887,7 +894,7 @@ def build_vitals_task(study_to_h5):
     )["time_diff"].idxmin()
     closest = merged.loc[closest_idx]
     wide = closest.pivot_table(
-        index=["study_id", "subject_id", "ecg_time"],
+        index=["study_id", "subject_id", "ecg_time", "strat_fold", "fold"],
         columns="result_name", values="result_value"
     ).reset_index()
 
@@ -994,7 +1001,7 @@ def build_labvalues_task(study_to_h5):
 
     # ECG-time 기준 closest 1시간 매칭 (mimic_preprocessing.py:398-407)
     labs_subset = dflabevents[dflabevents["label"].isin(LAB_COLS)]
-    merged = df_ecg[["subject_id", "study_id", "ecg_time"]].merge(
+    merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         labs_subset, on="subject_id", how="left"
     )
     merged["time_diff"] = (merged["storetime"] - merged["ecg_time"]).abs().dt.total_seconds() / 3600
@@ -1002,7 +1009,7 @@ def build_labvalues_task(study_to_h5):
     closest_idx = merged.groupby(["subject_id", "ecg_time", "label"])["time_diff"].idxmin()
     closest = merged.loc[closest_idx]
     wide = closest.pivot_table(
-        index=["study_id", "subject_id", "ecg_time"],
+        index=["study_id", "subject_id", "ecg_time", "strat_fold", "fold"],
         columns="label", values="valuenum"
     ).reset_index()
 

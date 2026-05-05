@@ -395,22 +395,35 @@ def main():
         data_cfg["test_folds"] = [int(x) for x in args.test_folds.split(",")]
 
     if auto_split and not args.train_folds and not args.val_folds:
-        # table CSV에 strat_fold가 있으면 자동 split
+        # table CSV → label CSV 순으로 strat_fold 탐색
+        # paper의 split: strat_fold ∈ [0,18) train / 18 val / 19 test (18/1/1)
         table_path = data_cfg.get("table_csv", "")
-        if os.path.exists(table_path):
-            _df = pd.read_csv(table_path, usecols=lambda c: c == fold_col, nrows=1)
-            if fold_col in _df.columns:
-                _df_full = pd.read_csv(table_path, usecols=[fold_col])
-                max_fold = int(_df_full[fold_col].max())
-                data_cfg["fold_col"] = fold_col
-                data_cfg["train_folds"] = list(range(0, max_fold - 1))
-                data_cfg["val_folds"] = [max_fold - 1]
-                data_cfg["test_folds"] = [max_fold]
-                if is_main_process():
-                    train_n = len(_df_full[_df_full[fold_col] < max_fold - 1])
-                    val_n = len(_df_full[_df_full[fold_col] == max_fold - 1])
-                    test_n = len(_df_full[_df_full[fold_col] == max_fold])
-                    logging.info(f"Auto fold split: train({train_n:,}) / val({val_n:,}) / test({test_n:,})")
+        label_path = data_cfg.get("label_csv", "")
+
+        fold_source = None
+        _df_full = None
+        for path in (table_path, label_path):
+            if path and os.path.exists(path):
+                _df = pd.read_csv(path, usecols=lambda c: c == fold_col, nrows=1)
+                if fold_col in _df.columns:
+                    _df_full = pd.read_csv(path, usecols=[fold_col])
+                    fold_source = path
+                    break
+
+        if _df_full is not None:
+            max_fold = int(_df_full[fold_col].max())
+            data_cfg["fold_col"] = fold_col
+            data_cfg["train_folds"] = list(range(0, max_fold - 1))
+            data_cfg["val_folds"] = [max_fold - 1]
+            data_cfg["test_folds"] = [max_fold]
+            if is_main_process():
+                train_n = len(_df_full[_df_full[fold_col] < max_fold - 1])
+                val_n = len(_df_full[_df_full[fold_col] == max_fold - 1])
+                test_n = len(_df_full[_df_full[fold_col] == max_fold])
+                src = "table" if fold_source == table_path else "label"
+                logging.info(f"Auto fold split [{src}]: train({train_n:,}) / val({val_n:,}) / test({test_n:,})")
+        elif is_main_process():
+            logging.warning(f"⚠ {fold_col} 컬럼이 table/label CSV 어디에도 없음 — split 안 됨")
 
     train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
     val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
