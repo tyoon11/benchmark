@@ -431,27 +431,12 @@ def main():
         elif is_main_process():
             logging.warning(f"⚠ {fold_col} 컬럼이 table/label CSV 어디에도 없음 — split 안 됨")
 
-    train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
-    val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
-
-    test_loader = None
-    has_test = (
-        data_cfg.get("test_folds")
-        or (data_cfg.get("loader_type") == "echonext_numpy"
-            and "test" in data_cfg.get("waveforms", {}))
-    )
-    if has_test:
-        _, test_loader = build_dataloaders_ddp(data_cfg, "test")
-
-    if is_main_process():
-        logging.info(f"Train: {len(train_ds):,} | Val: {len(val_ds):,}"
-                     + (f" | Test: {len(test_loader.dataset):,}" if test_loader else ""))
-
     # task_type 전달 (binary / multi-label-binary / regression)
     task_type = task_cfg.get("task_type", "binary")
     data_cfg["task_type"] = task_type
 
     # ── Regression target z-normalization (paper-faithful: train fold stats) ──
+    # IMPORTANT: dataloader 생성 전에 target_mean/std를 data_cfg에 넣어야 함
     if task_type == "regression" and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
         try:
             label_df_full = pd.read_csv(data_cfg["label_csv"], low_memory=False)
@@ -468,6 +453,22 @@ def main():
         except Exception as e:
             if is_main_process():
                 logging.warning(f"  z-norm 계산 실패 (그대로 진행): {e}")
+
+    train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
+    val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
+
+    test_loader = None
+    has_test = (
+        data_cfg.get("test_folds")
+        or (data_cfg.get("loader_type") == "echonext_numpy"
+            and "test" in data_cfg.get("waveforms", {}))
+    )
+    if has_test:
+        _, test_loader = build_dataloaders_ddp(data_cfg, "test")
+
+    if is_main_process():
+        logging.info(f"Train: {len(train_ds):,} | Val: {len(val_ds):,}"
+                     + (f" | Test: {len(test_loader.dataset):,}" if test_loader else ""))
 
     # ── Train ──
     trainer_cfg = {
