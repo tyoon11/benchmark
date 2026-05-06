@@ -48,7 +48,7 @@ class DownstreamTrainer:
         param_groups = self.model_unwrapped.get_param_groups(lr, disc_lr)
         self.optimizer = torch.optim.AdamW(
             param_groups,
-            weight_decay=float(self.cfg.get("weight_decay", 0.01)),
+            weight_decay=float(self.cfg.get("weight_decay", 1e-3)),
         )
 
         # 스케줄러 (paper: const by default)

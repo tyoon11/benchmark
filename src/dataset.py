@@ -73,6 +73,8 @@ class H5ECGDataset(Dataset):
         mean:          np.ndarray = None,
         std:           np.ndarray = None,
         task_type:     str = "binary",  # 'binary' | 'regression' | 'multi-label-binary'
+        target_mean:   np.ndarray = None,  # regression z-norm mean (paper-faithful)
+        target_std:    np.ndarray = None,  # regression z-norm std
     ):
         self.h5_root = Path(h5_root)
         self.target_fs = target_fs
@@ -81,6 +83,8 @@ class H5ECGDataset(Dataset):
         self.mean = mean
         self.std = std
         self.task_type = task_type
+        self.target_mean = np.asarray(target_mean, dtype=np.float32) if target_mean is not None else None
+        self.target_std = np.asarray(target_std, dtype=np.float32) if target_std is not None else None
 
         # 메타 테이블 로드
         self.table = pd.read_csv(table_csv, low_memory=False)
@@ -100,7 +104,7 @@ class H5ECGDataset(Dataset):
             # inner join: 라벨이 있는 ECG만 학습에 사용
             # (mimic4_table는 800k ECG 전체, 각 task의 cohort는 그 부분집합)
             self.table = self.table.merge(label_df, on=key_cols, how="inner",
-                                          suffixes=("", "_label"))
+                                          suffixes=("_table", ""))
             if n_before != len(self.table):
                 import logging
                 logging.info(f"  Label join: {n_before:,} → {len(self.table):,} rows "
@@ -222,6 +226,9 @@ class H5ECGDataset(Dataset):
                     float(row.get(c)) if pd.notna(row.get(c)) else np.nan
                     for c in self.label_cols
                 ], dtype=np.float32)
+                # paper z-normalize: (target - train_mean) / train_std
+                if self.target_mean is not None and self.target_std is not None:
+                    label = (label - self.target_mean) / (self.target_std + 1e-8)
             elif self.task_type == "multi-label-binary":
                 # binary 0/1, NaN 보존 (paper:114-118 mask용 — mds_ed의 missing label 처리)
                 vals = []
@@ -323,12 +330,15 @@ def build_dataloaders(cfg, split="train"):
         std=cfg.get("std"),
         task_type=cfg.get("task_type", "binary"),
     )
+    nw = int(os.environ.get("NUM_WORKERS", cfg.get("num_workers", 4)))
     loader = DataLoader(
         ds,
         batch_size=cfg.get("batch_size", 64),
         shuffle=(split == "train"),
-        num_workers=cfg.get("num_workers", 4),
+        num_workers=nw,
         pin_memory=True,
         drop_last=(split == "train"),
+        persistent_workers=(nw > 0),
+        prefetch_factor=4 if nw > 0 else None,
     )
     return ds, loader

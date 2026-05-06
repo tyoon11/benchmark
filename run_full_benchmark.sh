@@ -26,7 +26,7 @@ cd "$SCRIPT_DIR"
 
 # CPC(S4/pykeops)가 요구하는 GLIBCXX_3.4.32 심볼이 시스템 libstdc++에는 없음.
 # tykim conda env의 libstdc++.so.6.0.34를 preload해서 JIT 컴파일된 nvrtc_jit.so 로드를 성공시킴.
-export LD_PRELOAD=/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6
+export LD_PRELOAD=/home/irteam/local-node-a/_conda/envs/tykim/lib/libstdc++.so.6
 
 if [ -n "$RESUME_TS" ]; then
     TIMESTAMP="$RESUME_TS"
@@ -69,7 +69,7 @@ done
 if [ -n "$GPU_IDS_OVERRIDE" ]; then
     GPU_IDS=($GPU_IDS_OVERRIDE)
 else
-    GPU_IDS=(0 1 2 3 4 5 6)
+    GPU_IDS=(0 1 2 3 4 5 6 7)
 fi
 N_GPUS=${#GPU_IDS[@]}
 
@@ -85,9 +85,9 @@ fi
 # ─────────────────────────────────────────────────────────────
 # 설정 (ecg-fm-benchmarking 원본 동일: epochs=100, lr=1e-3, const schedule)
 # ─────────────────────────────────────────────────────────────
-EPOCHS=100
-FINETUNE_EPOCHS=100
-FINETUNE_LR="1e-3"
+EPOCHS=${EPOCHS:-100}
+FINETUNE_EPOCHS=${FINETUNE_EPOCHS:-100}
+FINETUNE_LR="${FINETUNE_LR:-1e-3}"
 
 if [ -n "$MODES_OVERRIDE" ]; then
     MODES=($MODES_OVERRIDE)
@@ -120,8 +120,8 @@ run_model() {
         for task in "${TASKS[@]}"; do
             local save_dir="$RESULT_DIR/${model_name}_${task}_${mode}"
 
-            # 이미 완료된 실험은 skip (test_metrics.txt가 존재하면)
-            if [ -f "$save_dir/test_metrics.txt" ]; then
+            # 이미 완료된 실험은 skip (test_metrics.txt 또는 val_metrics.txt 존재 시)
+            if [ -f "$save_dir/test_metrics.txt" ] || [ -f "$save_dir/val_metrics.txt" ]; then
                 echo ""
                 echo "  [SKIP] $model_name / $task / $mode (이미 완료)"
                 continue

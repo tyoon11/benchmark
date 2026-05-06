@@ -242,6 +242,9 @@ def build_dataloaders_ddp(data_cfg, split="train"):
             fold_ids=data_cfg.get(f"{split}_folds"),
             mean=data_cfg.get("mean"),
             std=data_cfg.get("std"),
+            task_type=data_cfg.get("task_type", "binary"),
+            target_mean=data_cfg.get("target_mean"),
+            target_std=data_cfg.get("target_std"),
         )
 
     sampler = None
@@ -250,14 +253,17 @@ def build_dataloaders_ddp(data_cfg, split="train"):
         sampler = DistributedSampler(ds, shuffle=shuffle)
         shuffle = False  # sampler가 shuffle 담당
 
+    nw = int(os.environ.get("NUM_WORKERS", data_cfg.get("num_workers", 4)))
     loader = DataLoader(
         ds,
         batch_size=int(data_cfg.get("batch_size", 64)),
         shuffle=shuffle,
         sampler=sampler,
-        num_workers=int(data_cfg.get("num_workers", 4)),
+        num_workers=nw,
         pin_memory=True,
         drop_last=(split == "train"),
+        persistent_workers=(nw > 0),
+        prefetch_factor=4 if nw > 0 else None,
     )
     return ds, loader
 
@@ -444,6 +450,24 @@ def main():
     # task_type 전달 (binary / multi-label-binary / regression)
     task_type = task_cfg.get("task_type", "binary")
     data_cfg["task_type"] = task_type
+
+    # ── Regression target z-normalization (paper-faithful: train fold stats) ──
+    if task_type == "regression" and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
+        try:
+            label_df_full = pd.read_csv(data_cfg["label_csv"], low_memory=False)
+            fold_col = data_cfg.get("fold_col", "strat_fold")
+            train_rows = label_df_full[label_df_full[fold_col].isin(data_cfg["train_folds"])]
+            label_cols = data_cfg.get("label_cols")
+            if label_cols and all(c in train_rows.columns for c in label_cols):
+                t_mean = train_rows[label_cols].mean(axis=0).values.astype("float32")
+                t_std = train_rows[label_cols].std(axis=0).values.astype("float32")
+                data_cfg["target_mean"] = t_mean.tolist()
+                data_cfg["target_std"] = t_std.tolist()
+                if is_main_process():
+                    logging.info(f"  Regression z-norm (train fold): mean={t_mean.tolist()}, std={t_std.tolist()}")
+        except Exception as e:
+            if is_main_process():
+                logging.warning(f"  z-norm 계산 실패 (그대로 진행): {e}")
 
     # ── Train ──
     trainer_cfg = {

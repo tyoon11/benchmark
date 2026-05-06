@@ -71,7 +71,7 @@ CHARTEVENTS_CSV = RAW_BASE / "mimiciv/3.1/icu/chartevents.csv.gz"
 D_ITEMS_CSV = RAW_BASE / "mimiciv/3.1/icu/d_items.csv.gz"
 
 # 캐시 (chartevents 1회 필터 후 재사용)
-CACHE_DIR = Path("/home/irteam/local-node-d/tykim/benchmark/labels/_cache")
+CACHE_DIR = Path("/home/irteam/local-node-a/tykim/benchmark/labels/_cache")
 CHARTEVENTS_FILTERED = CACHE_DIR / "chartevents_filtered.csv"
 
 # 라벨 정의 (paper / mimic_preprocessing.py 동일)
@@ -127,7 +127,7 @@ MDS_ICU_COLS = [
     "deterioration_icu_stay",
 ]
 
-OUT_DIR = Path("/home/irteam/local-node-d/tykim/benchmark/labels")
+OUT_DIR = Path("/home/irteam/local-node-a/tykim/benchmark/labels")
 
 # 원본 paper 설정 (mimic_preprocessing.py)
 FINETUNE_DATASET = "mimic_ed_all_edfirst_all_2000_5A"
