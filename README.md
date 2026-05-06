@@ -138,6 +138,94 @@ torchrun --nproc_per_node=4 run.py --task ptbxl_super --eval_mode finetune_linea
 
 ---
 
+## 통계 평가 (Bootstrap CI + 동순위 ranking)
+
+Paper §3.5 평가 절차 그대로:
+- **분류 1차 지표**: macro-averaged AUROC (↑)
+- **회귀 1차 지표**: z-normalized MAE (↓)
+- **유의차**: 테스트 세트 경험적 부트스트랩 (n=1000), 95% 신뢰구간이 0을 포함하지 않으면 유의
+- **동순위(tied)**: pairwise diff CI가 0 포함 → 통계적 유의차 없음
+
+학습 단계는 집계 metric만 저장하므로, **`best.pt`를 다시 로드해서 test 추론을 한 번 더** 돌려 sample-level 예측을 추출한 뒤 부트스트랩.
+
+### 한 번에 실행
+
+```bash
+# default — N_ITERS=1000, WORKERS=$(nproc), GPU 0 만 사용
+bash run_bootstrap.sh /path/to/results/<timestamp>
+
+# 4 GPU 병렬 + 32 CPU worker
+WORKERS=32 bash run_bootstrap.sh /path/to/results/<timestamp> "0,1,2,3"
+
+# 일부만
+FILTER=cpc bash run_bootstrap.sh /path/to/results/<timestamp> "0"
+
+# 추출 끝났으면 부트스트랩만 (CPU only)
+SKIP_EXTRACT=1 bash run_bootstrap.sh /path/to/results/<timestamp>
+```
+
+### 4-stage 파이프라인
+
+각 단계는 개별 스크립트로도 실행 가능 (`scripts/`).
+
+| 단계 | 스크립트 | 역할 |
+|---|---|---|
+| 1. **추출** | [`extract_predictions.py`](scripts/extract_predictions.py) | 각 `<model>_<task>_<mode>/best.pt` 로드 → test 추론 → `preds.npy`, `targets.npy`, `ids.npy`, `preds_meta.json` 저장. multi-window aggregation, regression z-norm, auto fold split 모두 학습 시와 동일 |
+| 2. **단일-모델 CI** | [`bootstrap_ci.py`](scripts/bootstrap_ci.py) | n=1000 경험적 부트스트랩 (paper `clinical_ts.utils.bootstrap_utils.empirical_bootstrap` 동일: `point + percentile(scores - point, 2.5/97.5)`). `bootstrap.json` + 합본 `bootstrap_summary.csv` |
+| 3. **Pairwise + 동순위** | [`bootstrap_pairwise.py`](scripts/bootstrap_pairwise.py) | (task, mode)별 모델 pair 모두에 대해 **공유 부트스트랩 인덱스**로 paired diff CI. union-find로 동순위 그룹화. `pairwise_diff_<task>_<mode>.csv`, `tied_groups_<task>_<mode>.txt`, `pairwise_summary.csv` |
+| 4. **Paper-style 표** | [`make_summary_table.py`](scripts/make_summary_table.py) | (task × model) pivot — **bold** = 단독 best, __underline__ = best와 통계적 동순위. `summary_<mode>.csv` (raw), `summary_<mode>_marked.csv`, `summary_<mode>.md`, `summary_ci_long.csv` |
+
+### 산출물 구조
+
+```
+results/<timestamp>/
+├── <model>_<task>_<mode>/
+│   ├── best.pt, test_metrics.txt        (학습 단계 산출물)
+│   ├── preds.npy        (N, C)          ← 1단계
+│   ├── targets.npy      (N, C)
+│   ├── ids.npy          (N,)            ← pairwise alignment 키
+│   ├── preds_meta.json
+│   └── bootstrap.json                   ← 2단계 — point + 95% CI
+│
+├── bootstrap_summary.csv                ← 모든 (model, task, mode) point + CI 합본
+└── pairwise/                            ← 3·4단계
+    ├── pairwise_diff_<task>_<mode>.csv  모델 pair별 diff CI + significant flag
+    ├── tied_groups_<task>_<mode>.txt    rank 그룹 (Rank 1: A=0.95  B=0.94  C=0.93 …)
+    ├── pairwise_summary.csv             task / mode / model / score / rank
+    │
+    ├── summary_<mode>.csv               논문 Table 1 형식 raw 점수 (Category × Task × Model)
+    ├── summary_<mode>_marked.csv        **best** / __tied__ 마킹된 CSV
+    ├── summary_<mode>.md                Markdown 표 (그대로 viewer 렌더링)
+    └── summary_ci_long.csv              "0.946 [0.928, 0.962]" long-format
+```
+
+### Markdown 표 예시 (`summary_<mode>.md`)
+
+```
+| Category  | Task              | ECGFounder | ECG-JEPA  | ST-MEM    | MERL      | … |
+|-----------|-------------------|------------|-----------|-----------|-----------|---|
+| Adult ECG | PTB ↑             | 0.780      | 0.816     | __0.862__ | 0.624     | … |
+| Adult ECG | Ningbo ↑          | 0.966      | 0.965     | **0.971** | 0.962     | … |
+| Adult ECG | PTB-XL (super) ↑  | 0.928      | 0.921     | 0.937     | __0.942__ | … |
+| Ped. ECG  | ZZU pECG ↑        | 0.905      | __0.918__ | __0.918__ | 0.896     | … |
+```
+
+`↑` macro-AUROC (분류) / `↓` z-norm MAE (회귀). **bold** = 점추정 단독 best. __underline__ = best와 paired bootstrap 95% CI가 0 포함 (통계적 동순위).
+
+### 시간 예상 (475 dirs, n=1000)
+
+| 단계 | 단일 코어 / 1 GPU | 4 GPU + 64 CPU worker |
+|---|---|---|
+| 1. 추출 (GPU bound) | ~6 시간 | **~1.5 시간** |
+| 2. CI | ~40 분 | ~3 분 |
+| 3. Pairwise | ~5 시간 | ~10 분 |
+| 4. 표 생성 | <10 초 | <10 초 |
+| **합계** | ~12 시간 | **~2 시간** |
+
+추출 후엔 raw `preds.npy`/`targets.npy`만 있으면 부트스트랩은 GPU 없이 언제든 다시 돌릴 수 있어 — `n_iters` 늘리거나 다른 metric 추가할 때 1·4단계만 재실행.
+
+---
+
 ## 새 모델 추가하기
 
 `src/encoders/my_model.py` 생성. 핵심은 **3개 클래스 속성**으로 paper input window를 선언하는 것:
@@ -437,6 +525,7 @@ benchmark/
 ├── run_full_benchmark.sh           # 전 모델 × 전 태스크 × 전 모드 병렬
 ├── run_parallel_tasks.sh           # 단일 모델 × 전 태스크
 ├── run_build_mimic_labels.sh       # MIMIC 11개 task 라벨 3-stage 병렬 빌드
+├── run_bootstrap.sh                # 부트스트랩 평가 4-stage 오케스트레이터
 ├── configs/
 │   ├── default.yaml                # 기본 학습 설정 (lr, epochs, head)
 │   ├── models.sh                   # 모델 레지스트리
@@ -451,7 +540,15 @@ benchmark/
 │   ├── encoders/                   # 8 encoder adapters
 │   └── external/clinical_ts/       # paper backbone subset (bundled)
 ├── labels/                         # paper-canonical 라벨 정의 (csv + json)
-├── scripts/                        # 라벨/fold 빌드 + UMAP + build_mimic_labels.py
+├── scripts/
+│   ├── build_labels_paper.py       # paper-canonical 라벨 빌드
+│   ├── build_mimic_labels.py       # MIMIC 11개 task 라벨 빌드
+│   ├── build_folds.py              # strat_fold 컬럼 생성
+│   ├── summarize_results.py        # 학습 결과 CSV 요약
+│   ├── extract_predictions.py      # [bootstrap 1단계] best.pt → test 추론 → preds.npy
+│   ├── bootstrap_ci.py             # [bootstrap 2단계] n=1000 단일-모델 95% CI
+│   ├── bootstrap_pairwise.py       # [bootstrap 3단계] paired diff CI + tied-rank
+│   └── make_summary_table.py       # [bootstrap 4단계] paper-style table (CSV/MD)
 └── results/                        # 실험 결과 (gitignore)
 ```
 
