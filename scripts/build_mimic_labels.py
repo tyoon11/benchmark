@@ -1,14 +1,14 @@
 """
-MIMIC-IV-ECG 벤치마크 라벨 생성 스크립트
+MIMIC-IV-ECG Benchmark label build script
 =============================================
-원본 ecg-fm-benchmarking/mimic_preprocessing.py 및
+Original ecg-fm-benchmarking/mimic_preprocessing.py and
 ecg-fm-benchmarking/code/clinical_ts/utils/mimic_ecg_preprocessing.py
-1:1 재현.
+1:1 reproduction.
 
-Paper Table의 11개 MIMIC 태스크:
+Paper Table's 11 MIMIC tasks:
 
   ✅ Cardiac discharge diagnoses     (records_w_diag_icd10.csv, ICD-10 chapter IX)
-  ✅ Non-cardiac discharge diagnoses (records_w_diag_icd10.csv, 그 외)
+  ✅ Non-cardiac discharge diagnoses (records_w_diag_icd10.csv, Other)
   ✅ Sex (binary)                    (records_w_diag_icd10.csv)
   ✅ Age (regression)                (records_w_diag_icd10.csv)
   ✅ ECG features (regression, 7)    (machine_measurements.csv)
@@ -19,7 +19,7 @@ Paper Table의 11개 MIMIC 태스크:
   ✅ Vital signs (6)                 (vitalsign.csv.gz + chartevents.csv.gz)
   ✅ Lab values (18)                 (labevents.csv.gz + d_labitems.csv.gz + chartevents.csv.gz)
 
-필요한 raw 파일 (모두 PhysioNet credentialed):
+required raw files (all PhysioNet credentialed):
   /raw/physionet.org/files/
     ├── mimic-iv-ecg/1.0/machine_measurements.csv
     ├── mimic-iv-ecg-ext-icd-labels/1.0.1/records_w_diag_icd10.csv
@@ -28,18 +28,18 @@ Paper Table의 11개 MIMIC 태스크:
     ├── mimiciv/3.1/icu/{chartevents,d_items,icustays}.csv.gz
     └── multimodal-emergency-benchmark/1.0.0/mds_ed.csv
 
-출력 (모두 labels/mimic_<task>_paper_labels.{csv,json}):
+output (all labels/mimic_<task>_paper_labels.{csv,json}):
   cardiac, noncardiac, sex, age, ecg_features
   deterioration, mortality, icu_admission
   biometrics, vitals, labvalues
 
-실행:
+run:
   python scripts/build_mimic_labels.py --all
   python scripts/build_mimic_labels.py --task biometrics
 
-캐시:
-  labels/_cache/chartevents_filtered.csv 가 ~30GB chartevents 청크 필터 결과를
-  보존 (3개 task 공유). 재실행 시 자동 재사용.
+Cache:
+  labels/_cache/chartevents_filtered.csv ~30GB chartevents chunk filter result is
+  preserve (shared by 3 tasks). re-run at automatic re-use.
 """
 import argparse
 import json
@@ -52,10 +52,10 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 # ═══════════════════════════════════════════════════════════════
-# 경로
+# path
 # ═══════════════════════════════════════════════════════════════
-H5_ROOT = Path("/home/irteam/ddn-opendata1/h5/mimic4/v2.0")
-RAW_BASE = Path("/home/irteam/ddn-opendata1/raw/physionet.org/files")
+H5_ROOT = Path("/path/to/ecg_data/h5/mimic4/v2.0")
+RAW_BASE = Path("/path/to/ecg_data/raw/physionet.org/files")
 ICD_CSV = RAW_BASE / "mimic-iv-ecg-ext-icd-labels/1.0.1/records_w_diag_icd10.csv"
 MM_CSV = RAW_BASE / "mimic-iv-ecg/1.0/machine_measurements.csv"
 ADM_CSV = RAW_BASE / "mimiciv/3.1/hosp/admissions.csv.gz"
@@ -70,11 +70,11 @@ D_LABITEMS_CSV = RAW_BASE / "mimiciv/3.1/hosp/d_labitems.csv.gz"
 CHARTEVENTS_CSV = RAW_BASE / "mimiciv/3.1/icu/chartevents.csv.gz"
 D_ITEMS_CSV = RAW_BASE / "mimiciv/3.1/icu/d_items.csv.gz"
 
-# 캐시 (chartevents 1회 필터 후 재사용)
-CACHE_DIR = Path("/home/irteam/local-node-a/tykim/benchmark/labels/_cache")
+# cache (chartevents filtered once, then re-used)
+CACHE_DIR = Path("/path/to/workspace/benchmark/labels/_cache")
 CHARTEVENTS_FILTERED = CACHE_DIR / "chartevents_filtered.csv"
 
-# 라벨 정의 (paper / mimic_preprocessing.py 동일)
+# label definition (paper / mimic_preprocessing.py identical)
 BIOMETRIC_COLS = ["Height (Inches)", "Weight (Lbs)", "BMI (kg/m2)"]
 VITAL_COLS = ["dbp", "heartrate", "o2sat", "resprate", "sbp", "temperature"]
 LAB_COLS = [
@@ -84,7 +84,7 @@ LAB_COLS = [
     "Red Blood Cells", "RDW-SD", "Creatine Kinase (CK)", "NTproBNP",
 ]
 
-# d_labitems itemid 화이트리스트 (mimic_preprocessing.py:126-128 그대로)
+# d_labitems itemid whitelist (mimic_preprocessing.py:126-128 as-is)
 LAB_ITEMIDS = [
     50963, 51006, 52647, 50811, 51222, 51640, 50912, 52546, 50924, 50912,
     52546, 51221, 51480, 51638, 51639, 52028, 50862, 53085, 51006, 52647,
@@ -93,7 +93,7 @@ LAB_ITEMIDS = [
     50910, 51249, 50893, 51244,
 ]
 
-# chartevents에서 추출할 라벨 (mimic_preprocessing.py:208-215)
+# to extract from chartevents label (mimic_preprocessing.py:208-215)
 CHARTEVENTS_EXTRACT_LABELS = [
     "Height (cm)", "Height", "Daily Weight",
     "Admission Weight (lbs.)", "Admission Weight (Kg)",
@@ -104,7 +104,7 @@ CHARTEVENTS_EXTRACT_LABELS = [
     "Creatinine (serum)", "Hematocrit (serum)", "Hemoglobin",
 ]
 
-# MDS-ED 컬럼 정의 (paper Table와 동일한 분류)
+# MDS-ED column definitions (same classification as paper Table)
 MDS_DETERIORATION_COLS = [
     "deterioration_severe_hypoxemia",
     "deterioration_ecmo",
@@ -127,27 +127,27 @@ MDS_ICU_COLS = [
     "deterioration_icu_stay",
 ]
 
-OUT_DIR = Path("/home/irteam/local-node-a/tykim/benchmark/labels")
+OUT_DIR = Path("/path/to/workspace/benchmark/labels")
 
-# 원본 paper 설정 (mimic_preprocessing.py)
+# original paper config (mimic_preprocessing.py)
 FINETUNE_DATASET = "mimic_ed_all_edfirst_all_2000_5A"
-MIN_CNT = 2000      # 진단 라벨 최소 양성 수
+MIN_CNT = 2000      # min positive count per diagnosis label
 DIGITS = 5          # ICD-10 truncate digits
-PROPAGATE_ALL = True  # 5A 모드 — 조상 노드 모두 추가
+PROPAGATE_ALL = True  # 5A mode — add all ancestor nodes
 
 
 # ═══════════════════════════════════════════════════════════════
-# H5 매핑
+# H5 mapping
 # ═══════════════════════════════════════════════════════════════
 def load_h5_mapping():
-    """study_id → h5_filepath 매핑 (799,929개)."""
+    """study_id → h5_filepath mapping (799,929)."""
     fn = pd.read_csv(H5_ROOT / "file_name.csv")
     fn["original_record_name"] = fn["original_record_name"].astype(int)
     return dict(zip(fn["original_record_name"], fn["h5_filepath"]))
 
 
 # ═══════════════════════════════════════════════════════════════
-# ICD 진단 — 원본 prepare_mimic_ecg() 재현
+# ICD diagnosis — original prepare_mimic_ecg() reproduction
 # ═══════════════════════════════════════════════════════════════
 def prepare_consistency_mapping(codes_unique, codes_unique_all, propagate_all=False):
     res = {}
@@ -160,14 +160,14 @@ def prepare_consistency_mapping(codes_unique, codes_unique_all, propagate_all=Fa
 
 
 def get_chapter_prefix(icd_code):
-    """ICD-10 chapter 매핑 (단순화 — 알파벳 prefix 기준).
+    """ICD-10 chapter mapping (simplified — by alphabetic prefix).
 
-    Paper에서 'cardiac chapter IX' = 순환계통 = 'I'로 시작하는 코드.
-    icd10 패키지 의존을 피하기 위해 첫 글자 prefix 매핑 사용.
+    Paper's 'cardiac chapter IX' = circulatory system, codes starting with 'I'.
+    Avoid the icd10 package dependency by using the first-letter prefix mapping.
 
     ICD-10 chapter:
-      I00-I99 = Chapter IX (순환계통, cardiac)
-      나머지 = non-cardiac
+      I00-I99 = Chapter IX (circulatory system, cardiac)
+      others = non-cardiac
     """
     if not icd_code or not isinstance(icd_code, str) or len(icd_code) == 0:
         return "unknown"
@@ -175,7 +175,7 @@ def get_chapter_prefix(icd_code):
 
 
 def parse_diag_lists(df, cols):
-    """문자열로 저장된 list를 실제 list로 파싱."""
+    """Parse a list stored as a string into an actual list."""
     for c in cols:
         df[c] = df[c].apply(lambda x: eval(x) if isinstance(x, str) else [])
     return df
@@ -184,16 +184,16 @@ def parse_diag_lists(df, cols):
 def prepare_diagnostic_labels(df_diags, label_col="all_diag_all",
                                min_cnt=MIN_CNT, digits=DIGITS,
                                propagate_all=PROPAGATE_ALL):
-    """원본 prepare_mimic_ecg()의 라벨 추출 부분 재현.
+    """Reproduces the label-extraction portion of the original prepare_mimic_ecg().
 
-    1. ICD-10 코드를 digits 자릿수로 truncate
-    2. trailing X 제거
-    3. propagate_all: 모든 조상 코드 (3~len) 추가
-    4. min_cnt 이상인 코드만 유지
+    1. truncate ICD-10 codes by digit count
+    2. trailing X remove
+    3. propagate_all: add all ancestor codes (3..len)
+    4. min_cnt or moreis code only keep
 
     Returns:
-        df: label_train 컬럼이 추가된 DataFrame
-        lbl_itos: 살아남은 라벨 리스트 (정렬된 순서)
+        df: label_train column added DataFrame
+        lbl_itos: surviving label list (sorted order)
     """
     df = df_diags.copy()
     df["label_train"] = df[label_col].apply(
@@ -224,7 +224,7 @@ def prepare_diagnostic_labels(df_diags, label_col="all_diag_all",
 # Output writer
 # ═══════════════════════════════════════════════════════════════
 def sanitize(s):
-    """라벨 → CSV 컬럼명."""
+    """label → CSV column name."""
     return (str(s).replace(" ", "_").replace(",", "")
             .replace("-", "_").replace("(", "").replace(")", "")
             .replace("'", "").replace("/", "_").replace(":", "_")
@@ -232,7 +232,7 @@ def sanitize(s):
 
 
 def save_multilabel_csv(name, df, label_col, lbl_itos, source_desc):
-    """multi-label binary CSV 저장. strat_fold 컬럼 포함 (paper split)."""
+    """multi-label binary CSV save. strat_fold column include (paper split)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
@@ -258,7 +258,7 @@ def save_multilabel_csv(name, df, label_col, lbl_itos, source_desc):
 
 
 def save_binary_csv(name, df, label_col, label_name, source_desc):
-    """단일 binary 컬럼 CSV 저장. strat_fold 컬럼 포함."""
+    """single binary column CSV save. strat_fold column include."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
@@ -279,7 +279,7 @@ def save_binary_csv(name, df, label_col, label_name, source_desc):
 
 
 def save_multilabel_numeric_csv(name, df, label_cols, source_desc, label_descriptions=None):
-    """다변량 binary multi-label CSV 저장 (NaN 보존, 0/1 numeric). strat_fold 포함."""
+    """Save multivariate binary multi-label CSV (NaN preserved, 0/1 numeric, strat_fold included)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
@@ -301,7 +301,7 @@ def save_multilabel_numeric_csv(name, df, label_cols, source_desc, label_descrip
 
 
 def save_regression_csv(name, df, label_cols, source_desc):
-    """다변량 regression CSV 저장 (값은 raw, NaN 보존). strat_fold 포함."""
+    """multivariate regression CSV save (value raw, NaN preserve). strat_fold include."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"mimic_{name}_paper_labels.csv"
     out_json = OUT_DIR / f"mimic_{name}_paper_labels.json"
@@ -324,15 +324,15 @@ def save_regression_csv(name, df, label_cols, source_desc):
 # Tasks
 # ═══════════════════════════════════════════════════════════════
 def get_diagnostic_cohort(study_to_h5=None, return_filepath=True):
-    """원본 paper의 is_diagnostic==1 cohort 재현.
+    """original paper's is_diagnostic==1 cohort reproduction.
 
     paper mimic_preprocessing.py:44-50 + ecg_utils.py prepare_mimic_ecg
     (finetune_dataset='mimic_ed_all_edfirst_all_2000_5A'):
       - subsettrain='ed' + has_statements_train==True
       - subsettest='edfirst' (first ECG per stay) + has_statements_test==True
 
-    paper Table의 metadata task들 (sex/age/ecg_features/biometrics/vitals/labvalues)
-    및 MDS-ED task들이 모두 이 cohort에 한정됨.
+    paper Table's metadata tasks (sex/age/ecg_features/biometrics/vitals/labvalues)
+    and MDS-ED tasks restricted to the cohort.
 
     Returns:
         DataFrame with columns: study_id, subject_id, ecg_time, fold, [filepath]
@@ -344,9 +344,9 @@ def get_diagnostic_cohort(study_to_h5=None, return_filepath=True):
     df["has_ed"] = df["ed_diag_ed"].apply(lambda x: len(x) > 0)
 
     # paper subsettrain='ed' OR subsettest='edfirst':
-    #   train: ED ECG + has_all (all_diag_all 비어있지 않음)
+    #   train: ED ECG + has_all (all_diag_all not empty)
     #   test:  ED ECG + ecg_no_within_stay==0 + has_ed
-    # 통합: ED ECG + (has_all OR has_ed)
+    # merge: ED ECG + (has_all OR has_ed)
     cohort = df[
         (df["ecg_taken_in_ed"] == True) &
         (df["has_all"] | df["has_ed"])
@@ -365,25 +365,25 @@ def get_diagnostic_cohort(study_to_h5=None, return_filepath=True):
 def build_diagnostic_tasks(study_to_h5):
     """Cardiac / Non-cardiac discharge diagnoses (multi-label).
 
-    원본 prepare_mimic_ecg(finetune_dataset='mimic_ed_all_edfirst_all_2000_5A')
-    의 정확한 순서:
-      1. 전체 records_w_diag_icd10.csv 에서 라벨 추출 → lbl_itos 결정
-         (= mimic_ecg_preprocessing.py:120-127, df_diags 전체 사용)
-      2. ED ECG로 train subset 필터링 (subsettrain='ed')
-      3. ED first-ECG-per-stay로 test subset 필터링 (subsettest='edfirst')
-    핵심: lbl_itos는 ED 필터 BEFORE 가 아닌 AFTER 추출되어야 paper의 158/918 라벨 set 재현.
+    original prepare_mimic_ecg(finetune_dataset='mimic_ed_all_edfirst_all_2000_5A')
+    Exact order:
+      1. extract labels from all records_w_diag_icd10.csv → determine lbl_itos
+         (= mimic_ecg_preprocessing.py:120-127, df_diags all use)
+      2. ED ECG by train subset filtering (subsettrain='ed')
+      3. ED first-ECG-per-stay by test subset filtering (subsettest='edfirst')
+    Key: lbl_itos must be extracted AFTER (not BEFORE) the ED filter to reproduce the paper's 158/918 label set.
     """
     logging.info("\n=== Diagnostic (cardiac / non-cardiac) ===")
     df = pd.read_csv(ICD_CSV, low_memory=False)
     df = parse_diag_lists(df, ["all_diag_all", "ed_diag_ed", "ed_diag_hosp",
                                 "hosp_diag_hosp", "all_diag_hosp"])
-    logging.info(f"  ICD csv 총 {len(df):,} rows")
+    logging.info(f"  total ICD csv rows: {len(df):,} rows")
 
-    # 1. 전체 corpus에서 라벨 추출 (paper 원본 동일)
+    # 1. all corpus from label extract (paper original identical)
     df_lbl, lbl_itos = prepare_diagnostic_labels(df, label_col="all_diag_all")
-    logging.info(f"  전체 corpus Labels (≥{MIN_CNT}): {len(lbl_itos)}")
+    logging.info(f"  all corpus Labels (≥{MIN_CNT}): {len(lbl_itos)}")
 
-    # 2. ED 필터 (subsettrain='ed' / subsettest='edfirst' 의 공통 제약)
+    # 2. ED filter (subsettrain='ed' / subsettest='edfirst' common constraint)
     df_lbl = df_lbl[df_lbl["ecg_taken_in_ed"] == True].copy()
     logging.info(f"  ECG taken in ED: {len(df_lbl):,}")
 
@@ -393,17 +393,17 @@ def build_diagnostic_tasks(study_to_h5):
     logging.info(f"  Cardiac (chapter IX, 'I' prefix): {len(cardiac)}")
     logging.info(f"  Non-cardiac:                       {len(noncardiac)}")
 
-    # 통계가 없는 ECG (label_train empty) 제외 — 원본 has_statements_train==True
+    # exclude ECGs without statistics (label_train empty) — matches original has_statements_train==True
     df_lbl["has_label"] = df_lbl["label_train"].apply(lambda x: len(x) > 0)
 
-    # filepath 매핑
+    # filepath mapping
     df_lbl["filepath"] = df_lbl["study_id"].apply(
         lambda x: study_to_h5.get(int(x)) if pd.notna(x) else None
     )
     df_lbl = df_lbl[df_lbl["filepath"].notna()].copy()
-    logging.info(f"  H5 매핑 후: {len(df_lbl):,}")
+    logging.info(f"  after H5 mapping: {len(df_lbl):,}")
 
-    # cardiac 출력
+    # cardiac output
     df_card = df_lbl.copy()
     df_card["label_card"] = df_card["label_train"].apply(
         lambda x: [c for c in x if c in set(cardiac)]
@@ -414,7 +414,7 @@ def build_diagnostic_tasks(study_to_h5):
                         source_desc=f"records_w_diag_icd10.csv → ICD-10 chapter IX (I-prefix), "
                                     f"truncate {DIGITS} digits, propagate ancestors, min_cnt={MIN_CNT}")
 
-    # non-cardiac 출력
+    # non-cardiac output
     df_nc = df_lbl.copy()
     df_nc["label_nc"] = df_nc["label_train"].apply(
         lambda x: [c for c in x if c in set(noncardiac)]
@@ -427,7 +427,7 @@ def build_diagnostic_tasks(study_to_h5):
 
 
 def build_sex_age_tasks(study_to_h5):
-    """Sex (binary), Age (regression) — paper is_diagnostic cohort 적용."""
+    """Sex (binary), Age (regression) — paper is_diagnostic cohort apply."""
     logging.info("\n=== Sex / Age (patient characteristics) ===")
     cohort = get_diagnostic_cohort(study_to_h5)
     logging.info(f"  diagnostic cohort: {len(cohort):,}")
@@ -455,15 +455,15 @@ def build_ecg_features_task(study_to_h5):
     """ECG features (regression, 7) — machine_measurements.csv."""
     logging.info("\n=== ECG features (machine_measurements) ===")
     df = pd.read_csv(MM_CSV, low_memory=False)
-    logging.info(f"  machine_measurements 총 {len(df):,}")
+    logging.info(f"  machine_measurements  total {len(df):,}")
 
-    # 원본 outlier 처리 (mimic_preprocessing.py:92-100)
+    # original outlier handling (mimic_preprocessing.py:92-100)
     for col in ["qrs_axis", "t_axis", "p_axis"]:
         df.loc[(df[col] < -360) | (df[col] > 360), col] = np.nan
     for col in ["p_onset", "p_end", "qrs_onset", "qrs_end", "t_end", "rr_interval"]:
         df.loc[(df[col] < 0) | (df[col] > 5000), col] = np.nan
 
-    # 원본 파생 (RR/PR/QRS/QT/QTc 계산 — mimic_preprocessing.py:101-109)
+    # Original derived (RR/PR/QRS/QT/QTc compute — mimic_preprocessing.py:101-109)
     df = df.rename(columns={"rr_interval": "RR", "p_axis": "P_wave_axis",
                              "qrs_axis": "QRS_axis", "t_axis": "T_wave_axis"})
     df["PR"] = df["qrs_onset"] - df["p_onset"]
@@ -471,7 +471,7 @@ def build_ecg_features_task(study_to_h5):
     df["QT"] = df["t_end"] - df["qrs_onset"]
     df["QTc"] = np.where(df["RR"] != 0, df["QT"] / np.sqrt(df["RR"] / 1000), np.nan)
 
-    # paper의 7개 feature
+    # paper's 7 feature
     feat_cols = ["RR", "QRS", "QT", "QTc", "P_wave_axis", "QRS_axis", "T_wave_axis"]
 
     # paper cohort intersection (mimic_preprocessing.py:420 is_diagnostic==1)
@@ -480,32 +480,32 @@ def build_ecg_features_task(study_to_h5):
     df = df.merge(cohort[["study_id", "filepath", "strat_fold", "fold"]],
                   on="study_id", how="inner")
 
-    # 모든 feature가 NaN인 행 제거
+    # all feature NaNis rows remove
     df = df.dropna(subset=feat_cols, how="all").copy()
     logging.info(f"  cohort ∩ ECG features: {len(df):,}")
 
     save_regression_csv("ecg_features", df, feat_cols,
                         source_desc="machine_measurements.csv ∩ paper is_diagnostic cohort. "
-                                    "RR/QRS/QT/QTc/P_axis/QRS_axis/T_axis (outlier 처리 후 raw).")
+                                    "RR/QRS/QT/QTc/P_axis/QRS_axis/T_axis (outlier handling after raw).")
 
 
 def _load_mds_ed_with_filepath(study_to_h5, value_cols, restrict_to_cohort=True):
-    """MDS-ED CSV 로드 + study_id → h5 filepath 매핑 + paper cohort 필터.
+    """MDS-ED CSV load + study_id → h5 filepath mapping + paper cohort filter.
 
-    원본 mimic_preprocessing.py:
-      - -999. 을 np.nan으로 변경 (line 75)
-      - general_data, general_strat_fold, general_subject_id 사용
-      - line 420: is_diagnostic==1 cohort에 한정 (paper Table 5,577 / 17,639 / 18,690)
+    original mimic_preprocessing.py:
+      - Replace -999.0 with np.nan (line 75)
+      - general_data, general_strat_fold, general_subject_id use
+      - line 420: is_diagnostic==1 cohort in restrict (paper Table 5,577 / 17,639 / 18,690)
 
-    여기서는 general_study_id로 H5 매핑 + diagnostic cohort intersection.
+    Here: H5 mapping by general_study_id + intersect with diagnostic cohort.
 
-    추가로 paper Table 매칭 위해 "value column이 모두 NaN인 row 제거" 적용:
-      - paper의 "Samples" 카운트는 라벨 정의된 sample 수로 보임
+    add by paper Table matching above "value column all NaNis row remove" apply:
+      - paper's "Samples"  label definitioned sample  
     """
     df = pd.read_csv(MDS_ED_CSV, low_memory=False)
     keep = ["general_study_id", "general_subject_id", "general_strat_fold"] + value_cols
     df = df[keep].copy()
-    # paper의 split: general_strat_fold 0-17/18/19 (18/1/1)
+    # paper's split: general_strat_fold 0-17/18/19 (18/1/1)
     df = df.rename(columns={"general_strat_fold": "strat_fold"})
     for c in value_cols:
         df[c] = df[c].replace(-999., np.nan)
@@ -514,11 +514,11 @@ def _load_mds_ed_with_filepath(study_to_h5, value_cols, restrict_to_cohort=True)
     )
     df = df[df["filepath"].notna()].copy()
 
-    # value 컬럼이 모두 NaN인 row 제거 (paper Table samples 매칭용)
+    # value column all NaNis row remove (paper Table samples matching (for))
     n_before_value = len(df)
     df = df.dropna(subset=value_cols, how="all").copy()
     logging.info(f"  MDS-ED rows: {len(df):,} / {n_before_value:,} "
-                 f"(value 컬럼 중 1개 이상 valid)")
+                 f"(value column  of 1 or more valid)")
 
     # paper is_diagnostic cohort intersection (mimic_preprocessing.py:420)
     if restrict_to_cohort:
@@ -534,12 +534,12 @@ def _load_mds_ed_with_filepath(study_to_h5, value_cols, restrict_to_cohort=True)
 def build_deterioration_task(study_to_h5):
     """Clinical deterioration — paper Table 5,577 × 6 outputs.
 
-    원본 mimic_preprocessing.py 라인 67-84 재현.
-    MDS-ED의 6개 deterioration 이벤트 (mortality/ICU 제외).
+    original mimic_preprocessing.py is 67-84 reproduction.
+    MDS-ED's 6 deterioration  (mortality/ICU exclude).
     """
     logging.info("\n=== Clinical deterioration (MDS-ED 6 outputs) ===")
     df = _load_mds_ed_with_filepath(study_to_h5, MDS_DETERIORATION_COLS)
-    logging.info(f"  H5 매핑 후: {len(df):,}")
+    logging.info(f"  after H5 mapping: {len(df):,}")
 
     descs = {
         c: c.replace("deterioration_", "").replace("_", " ")
@@ -547,9 +547,9 @@ def build_deterioration_task(study_to_h5):
     }
     save_multilabel_numeric_csv(
         "deterioration", df, MDS_DETERIORATION_COLS,
-        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 6 deterioration columns "
+        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv of 6 deterioration columns "
                     "(severe_hypoxemia, ecmo, vasopressors, inotropes, mechanical_ventilation, cardiac_arrest), "
-                    "원본 mimic_preprocessing.py:67-84 재현.",
+                    "original mimic_preprocessing.py:67-84 reproduction.",
         label_descriptions=descs,
     )
 
@@ -557,18 +557,18 @@ def build_deterioration_task(study_to_h5):
 def build_mortality_task(study_to_h5):
     """Mortality — paper Table 17,639 × 7 outputs (multi-horizon).
 
-    원본은 MDS-ED의 7개 mortality column.
-    이전 1-class 단순화 버전을 paper 정확본으로 교체.
+    original MDS-ED's 7 mortality column.
+    previous 1-class justorder version paper  as replace.
     """
     logging.info("\n=== Mortality (MDS-ED 7-horizon) ===")
     df = _load_mds_ed_with_filepath(study_to_h5, MDS_MORTALITY_COLS)
-    logging.info(f"  H5 매핑 후: {len(df):,}")
+    logging.info(f"  after H5 mapping: {len(df):,}")
     descs = {
         c: c.replace("deterioration_mortality_", "mortality_") for c in MDS_MORTALITY_COLS
     }
     save_multilabel_numeric_csv(
         "mortality", df, MDS_MORTALITY_COLS,
-        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 7 mortality horizons "
+        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv of 7 mortality horizons "
                     "(1d/7d/28d/90d/180d/365d/stay).",
         label_descriptions=descs,
     )
@@ -577,30 +577,30 @@ def build_mortality_task(study_to_h5):
 def build_icu_admission_task(study_to_h5):
     """ICU admission — paper Table 18,690 × 2 outputs.
 
-    원본은 MDS-ED의 2개 ICU column (icu_24h, icu_stay).
-    이전 hospital admission proxy 버전을 paper 정확본으로 교체.
+    original MDS-ED's 2 ICU column (icu_24h, icu_stay).
+    previous hospital admission proxy version paper  as replace.
     """
     logging.info("\n=== ICU admission (MDS-ED 2 outputs) ===")
     df = _load_mds_ed_with_filepath(study_to_h5, MDS_ICU_COLS)
-    logging.info(f"  H5 매핑 후: {len(df):,}")
+    logging.info(f"  after H5 mapping: {len(df):,}")
     descs = {c: c.replace("deterioration_", "") for c in MDS_ICU_COLS}
     save_multilabel_numeric_csv(
         "icu_admission", df, MDS_ICU_COLS,
-        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 2 ICU columns "
-                    "(icu_24h: 24시간 내 ICU 입실, icu_stay: 동일 stay 내 ICU 입실).",
+        source_desc="multimodal-emergency-benchmark/1.0.0/mds_ed.csv of 2 ICU columns "
+                    "(icu_24h: 24  inside ICU , icu_stay: identical stay  inside ICU ).",
         label_descriptions=descs,
     )
 
 
-def _try_read_edstays():  # 사용 중단: ICU admission이 MDS-ED로 이동
+def _try_read_edstays():  # use  ofjust: ICU admission MDS-ED by 
     return None
 def _legacy_try_read_edstays():
-    """edstays.csv.gz는 사용자 raw에서 truncated일 수 있어 부분 읽기 시도."""
+    """edstays.csv.gz users raw from truncatedcase   read ."""
     try:
         return pd.read_csv(ED_STAYS_CSV, usecols=["stay_id", "disposition"])
     except (EOFError, OSError) as e:
-        logging.warning(f"  edstays.csv.gz 부분 읽기 시도 (gzip 손상 가능): {e}")
-        # 부분 읽기 시도 — gzip 손상 시 chunked로 읽으면 일부라도 회수 가능
+        logging.warning(f"  edstays.csv.gz  read  (gzip above available): {e}")
+        #  read  — gzip above at chunked by  then some time available
         chunks = []
         try:
             for chunk in pd.read_csv(ED_STAYS_CSV, usecols=["stay_id", "disposition"],
@@ -610,36 +610,36 @@ def _legacy_try_read_edstays():
             pass
         if chunks:
             partial = pd.concat(chunks, ignore_index=True)
-            logging.warning(f"  edstays partial: {len(partial):,} rows 회수")
+            logging.warning(f"  edstays partial: {len(partial):,} rows time")
             return partial
         return pd.DataFrame(columns=["stay_id", "disposition"])
 
 
-# build_icu_admission_task은 위 MDS-ED 기반 정확본으로 이동.
+# build_icu_admission_task above MDS-ED based  as .
 
 
 # ═══════════════════════════════════════════════════════════════
-# chartevents 필터링 (Biometrics / Vitals / Labs 공통 전처리)
-# 원본 mimic_preprocessing.py:158-273 재현. ~30GB 청크 스트리밍.
+# chartevents filtering (Biometrics / Vitals / Labs common preprocessing)
+# original mimic_preprocessing.py:158-273 reproduction. ~30GB chunk .
 # ═══════════════════════════════════════════════════════════════
 def _prepare_chartevents_filtered(subject_ids):
-    """chartevents.csv.gz를 청크로 읽어 필터·캐시.
+    """chartevents.csv.gz chunk by  filter·cache.
 
-    원본 mimic_preprocessing.py:158-205:
-      1. d_items로 itemid→label 매핑
-      2. chunksize=1M으로 chartevents 스트리밍
-      3. subject_id가 df에 있는 row만 유지
+    original mimic_preprocessing.py:158-205:
+      1. d_items by itemid→label mapping
+      2. chunksize=1M as chartevents 
+      3. subject_id df in row only keep
       4. label != 'Safety Measures'
-      5. 라벨별 총 count >= 1000인 라벨만 유지
-      6. CACHE_DIR/chartevents_filtered.csv 에 누적 저장
+      5. label per  total count >= 1000is label only keep
+      6. CACHE_DIR/chartevents_filtered.csv in  save
 
-    재실행 시 캐시가 있으면 건너뜀.
+    re-run at cache if present, .
     """
     if CHARTEVENTS_FILTERED.exists():
-        logging.info(f"  chartevents 필터 캐시 사용: {CHARTEVENTS_FILTERED}")
+        logging.info(f"  chartevents filter cache use: {CHARTEVENTS_FILTERED}")
         return
     if not CHARTEVENTS_CSV.exists() or not D_ITEMS_CSV.exists():
-        logging.warning(f"  chartevents.csv.gz 또는 d_items.csv.gz 없음 — 보강 skip")
+        logging.warning(f"  chartevents.csv.gz or d_items.csv.gz none — enrich skip")
         return
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -648,8 +648,8 @@ def _prepare_chartevents_filtered(subject_ids):
     chunksize = 1_000_000
     min_label_count = 1000
 
-    # PASS 1: 라벨별 총 count
-    logging.info("  chartevents PASS 1 — 라벨 카운트 (1M chunks)")
+    # PASS 1: label per  total count
+    logging.info("  chartevents PASS 1 — label  (1M chunks)")
     label_counts = {}
     for chunk in pd.read_csv(CHARTEVENTS_CSV, compression="gzip",
                               low_memory=True, chunksize=chunksize):
@@ -661,10 +661,10 @@ def _prepare_chartevents_filtered(subject_ids):
         for label, count in chunk["label"].value_counts().items():
             label_counts[label] = label_counts.get(label, 0) + count
     labels_to_keep = {l for l, c in label_counts.items() if c >= min_label_count}
-    logging.info(f"  유지될 라벨 수: {len(labels_to_keep)}")
+    logging.info(f"  keep label : {len(labels_to_keep)}")
 
-    # PASS 2: 필터 후 디스크 누적
-    logging.info("  chartevents PASS 2 — 필터 후 디스크 저장")
+    # PASS 2: filter after  
+    logging.info("  chartevents PASS 2 — filter after  save")
     if CHARTEVENTS_FILTERED.exists():
         CHARTEVENTS_FILTERED.unlink()
     for chunk in pd.read_csv(CHARTEVENTS_CSV, compression="gzip",
@@ -678,13 +678,13 @@ def _prepare_chartevents_filtered(subject_ids):
         if not chunk.empty:
             chunk.to_csv(CHARTEVENTS_FILTERED, mode="a",
                          header=not CHARTEVENTS_FILTERED.exists(), index=False)
-    logging.info(f"  chartevents 캐시 저장: {CHARTEVENTS_FILTERED}")
+    logging.info(f"  chartevents cache save: {CHARTEVENTS_FILTERED}")
 
 
 def _load_chartevents_extract():
-    """필터된 chartevents에서 to_extract 라벨만 로드 + 단위 변환.
+    """filtered chartevents from to_extract label only load + justabove convert.
 
-    원본 mimic_preprocessing.py:218-273 재현.
+    original mimic_preprocessing.py:218-273 reproduction.
     """
     if not CHARTEVENTS_FILTERED.exists():
         return None
@@ -696,7 +696,7 @@ def _load_chartevents_extract():
         return pd.DataFrame()
     fdf = pd.concat(dfs, ignore_index=True)
 
-    # 단위 변환 (원본 lines 231-244)
+    # justabove convert (original lines 231-244)
     mask = fdf["label"] == "Admission Weight (Kg)"
     fdf.loc[mask, "valuenum"] = fdf.loc[mask, "valuenum"] * 2.20462
     fdf.loc[mask, "label"] = "Weight (lbs)"
@@ -739,9 +739,9 @@ def _load_chartevents_extract():
 def _load_ecg_metadata(study_to_h5=None, cohort_only=True):
     """records_w_diag_icd10.csv → study_id, subject_id, ecg_time, strat_fold, fold DataFrame.
 
-    cohort_only=True: paper is_diagnostic cohort에 한정
-    (mimic_preprocessing.py:420 — biometrics/vitals/labvalues 모두 이 cohort).
-    strat_fold/fold는 paper의 18/1/1 split 위해 포함.
+    cohort_only=True: paper is_diagnostic cohort in restrict
+    (mimic_preprocessing.py:420 — biometrics/vitals/labvalues all cohort).
+    strat_fold/fold paper's 18/1/1 split above include.
     """
     if cohort_only and study_to_h5 is not None:
         cohort = get_diagnostic_cohort(study_to_h5)
@@ -754,20 +754,20 @@ def _load_ecg_metadata(study_to_h5=None, cohort_only=True):
 
 
 def _quantile_filter(df, group_col, value_col, lo=0.01, hi=0.99):
-    """원본 mimic_preprocessing.py 의 1-99% quantile filter."""
+    """original mimic_preprocessing.py of 1-99% quantile filter."""
     q_lo = df.groupby(group_col)[value_col].transform(lambda x: x.quantile(lo))
     q_hi = df.groupby(group_col)[value_col].transform(lambda x: x.quantile(hi))
     return df[(df[value_col] >= q_lo) & (df[value_col] <= q_hi)]
 
 
 # ═══════════════════════════════════════════════════════════════
-# Biometrics (3) — omr.csv.gz + chartevents 보강 + 30일 윈도우
-# 원본 mimic_preprocessing.py:115-117, 280-306, 378-386 재현.
+# Biometrics (3) — omr.csv.gz + chartevents enrich + 30case 
+# original mimic_preprocessing.py:115-117, 280-306, 378-386 reproduction.
 # ═══════════════════════════════════════════════════════════════
 def build_biometrics_task(study_to_h5):
     logging.info("\n=== Biometrics (Height / Weight / BMI) ===")
     if not OMR_CSV.exists():
-        logging.warning(f"  omr.csv.gz 없음 ({OMR_CSV}) — 건너뜀")
+        logging.warning(f"  omr.csv.gz none ({OMR_CSV}) — ")
         return
 
     df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
@@ -779,7 +779,7 @@ def build_biometrics_task(study_to_h5):
     omr = omr.dropna(subset=["result_value"])
     omr["chartdate"] = pd.to_datetime(omr["chartdate"])
 
-    # chartevents 보강 (Weight (lbs), Height (Inches))
+    # chartevents enrich (Weight (lbs), Height (Inches))
     _prepare_chartevents_filtered(subject_ids)
     fdf = _load_chartevents_extract()
     if fdf is not None and not fdf.empty:
@@ -795,15 +795,15 @@ def build_biometrics_task(study_to_h5):
         if new_rows:
             new_df = pd.DataFrame(new_rows)
             omr = pd.concat([omr, new_df], ignore_index=True)
-        # Weight (lbs) → "Weight (Lbs)" (omr 표준)
+        # Weight (lbs) → "Weight (Lbs)" (omr standard)
         omr["result_name"] = omr["result_name"].replace({"Weight (lbs)": "Weight (Lbs)"})
-        logging.info(f"  chartevents 보강 후 omr rows: {len(omr):,}")
+        logging.info(f"  chartevents enrich after omr rows: {len(omr):,}")
 
     omr["result_value"] = pd.to_numeric(omr["result_value"], errors="coerce")
     omr = _quantile_filter(omr, "result_name", "result_value")
     omr["chartdate"] = pd.to_datetime(omr["chartdate"])
 
-    # ECG-time 기준 closest 30일 내 매칭 (mimic_preprocessing.py:378-386)
+    # ECG-time reference: closest 30case  inside matching (mimic_preprocessing.py:378-386)
     omr_subset = omr[omr["result_name"].isin(BIOMETRIC_COLS)]
     merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         omr_subset, on="subject_id", how="left"
@@ -824,25 +824,25 @@ def build_biometrics_task(study_to_h5):
     )
     wide = wide[wide["filepath"].notna()].copy()
 
-    # 컬럼이 있는지 확인 (없으면 NaN으로)
+    # column  confirm (if absent NaN as)
     for c in BIOMETRIC_COLS:
         if c not in wide.columns:
             wide[c] = np.nan
     save_regression_csv(
         "biometrics", wide, BIOMETRIC_COLS,
-        source_desc="omr.csv.gz (Height/Weight/BMI) + chartevents 보강 (Weight/Height), "
-                    "ECG-time 기준 closest 30일 매칭. mimic_preprocessing.py:115-117,280-306,378-386 재현.",
+        source_desc="omr.csv.gz (Height/Weight/BMI) + chartevents enrich (Weight/Height), "
+                    "ECG-time reference: closest 30case matching. mimic_preprocessing.py:115-117,280-306,378-386 reproduction.",
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# Vital signs (6) — vitalsign.csv.gz + chartevents 보강 + 1시간 윈도우
-# 원본 mimic_preprocessing.py:120-122, 307-339, 388-396 재현.
+# Vital signs (6) — vitalsign.csv.gz + chartevents enrich + 1 
+# original mimic_preprocessing.py:120-122, 307-339, 388-396 reproduction.
 # ═══════════════════════════════════════════════════════════════
 def build_vitals_task(study_to_h5):
     logging.info("\n=== Vital signs (temp / HR / RR / SpO2 / SBP / DBP) ===")
     if not VITAL_CSV.exists():
-        logging.warning(f"  vitalsign.csv.gz 없음 ({VITAL_CSV}) — 건너뜀")
+        logging.warning(f"  vitalsign.csv.gz none ({VITAL_CSV}) — ")
         return
 
     df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
@@ -859,7 +859,7 @@ def build_vitals_task(study_to_h5):
         var_name="result_name", value_name="result_value",
     ).sort_values(["subject_id", "charttime", "result_name"]).reset_index(drop=True)
 
-    # chartevents 보강 (temperature, heartrate, resprate, o2sat)
+    # chartevents enrich (temperature, heartrate, resprate, o2sat)
     _prepare_chartevents_filtered(subject_ids)
     fdf = _load_chartevents_extract()
     if fdf is not None and not fdf.empty:
@@ -875,14 +875,14 @@ def build_vitals_task(study_to_h5):
         if new_rows:
             new_df = pd.DataFrame(new_rows)
             vital_long = pd.concat([vital_long, new_df], ignore_index=True)
-        logging.info(f"  chartevents 보강 후 vital rows: {len(vital_long):,}")
+        logging.info(f"  chartevents enrich after vital rows: {len(vital_long):,}")
 
     vital_long = vital_long.dropna(subset=["result_value"]).reset_index(drop=True)
     vital_long["result_value"] = pd.to_numeric(vital_long["result_value"], errors="coerce")
     vital_long = _quantile_filter(vital_long, "result_name", "result_value")
     vital_long["charttime"] = pd.to_datetime(vital_long["charttime"])
 
-    # ECG-time 기준 closest 1시간 내 매칭 (mimic_preprocessing.py:388-396)
+    # ECG-time reference: closest 1  inside matching (mimic_preprocessing.py:388-396)
     merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         vital_long[["subject_id", "charttime", "result_name", "result_value"]],
         on="subject_id", how="left"
@@ -908,32 +908,32 @@ def build_vitals_task(study_to_h5):
             wide[c] = np.nan
     save_regression_csv(
         "vitals", wide, VITAL_COLS,
-        source_desc="vitalsign.csv.gz (HR/RR/BP/Temp/SpO2) + chartevents 보강, "
-                    "ECG-time 기준 closest 1시간 매칭. "
-                    "mimic_preprocessing.py:120-122,307-339,388-396 재현.",
+        source_desc="vitalsign.csv.gz (HR/RR/BP/Temp/SpO2) + chartevents enrich, "
+                    "ECG-time (closest within ±1 h). "
+                    "mimic_preprocessing.py:120-122,307-339,388-396 reproduction.",
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# Lab values (18) — labevents + d_labitems + chartevents 보강
-# 원본 mimic_preprocessing.py:124-154, 344-372, 398-407 재현.
+# Lab values (18) — labevents + d_labitems + chartevents enrich
+# original mimic_preprocessing.py:124-154, 344-372, 398-407 reproduction.
 # ═══════════════════════════════════════════════════════════════
 def build_labvalues_task(study_to_h5):
     logging.info("\n=== Lab values (18 targets) ===")
     if not LABEVENTS_CSV.exists() or not D_LABITEMS_CSV.exists():
-        logging.warning(f"  labevents.csv.gz 또는 d_labitems.csv.gz 없음 — 건너뜀")
+        logging.warning(f"  labevents.csv.gz or d_labitems.csv.gz none — ")
         return
 
     df_ecg = _load_ecg_metadata(study_to_h5, cohort_only=True)
     subject_ids = set(df_ecg["subject_id"].unique())
     logging.info(f"  diagnostic cohort: {len(df_ecg):,} ECGs / {len(subject_ids):,} patients")
 
-    # 1. labitems 화이트리스트
+    # 1. labitems whitelist
     dflabitems = pd.read_csv(D_LABITEMS_CSV)
     dflabitems = dflabitems[dflabitems["itemid"].isin(LAB_ITEMIDS)]
 
-    # 2. labevents (청크로 읽기 — 30M+ rows)
-    logging.info("  labevents 청크 읽기")
+    # 2. labevents (chunk by read — 30M+ rows)
+    logging.info("  labevents chunk read")
     keep_itemids = set(dflabitems["itemid"].unique())
     chunks = []
     for chunk in pd.read_csv(LABEVENTS_CSV, compression="gzip",
@@ -945,11 +945,11 @@ def build_labvalues_task(study_to_h5):
             chunks.append(chunk)
     dflabevents = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     if dflabevents.empty:
-        logging.warning("  labevents 매칭 0건 — skip")
+        logging.warning("  labevents matching 0 — skip")
         return
     dflabevents = dflabevents.merge(dflabitems[["itemid", "label"]], on="itemid", how="left")
 
-    # 3. (label, itemid) 가장 흔한 pair만 (mimic_preprocessing.py:135-138)
+    # 3. (label, itemid)   pair only (mimic_preprocessing.py:135-138)
     pair_counts = dflabevents.groupby(["label", "itemid"]).size().reset_index(name="count")
     most_common = pair_counts.loc[pair_counts.groupby("label")["count"].idxmax(),
                                    ["label", "itemid"]]
@@ -962,7 +962,7 @@ def build_labvalues_task(study_to_h5):
     # 4. 1-99% outlier filter per label
     dflabevents = _quantile_filter(dflabevents, "label", "valuenum")
 
-    # 5. 가장 흔한 valueuom
+    # 5.   valueuom
     uom_counts = dflabevents.groupby(["itemid", "valueuom"]).size().reset_index(name="count")
     most_common_uom = uom_counts.loc[uom_counts.groupby("itemid")["count"].idxmax(),
                                        ["itemid", "valueuom"]]
@@ -970,7 +970,7 @@ def build_labvalues_task(study_to_h5):
     dflabevents["storetime"] = pd.to_datetime(dflabevents["storetime"])
     dflabevents = dflabevents[["subject_id", "storetime", "valuenum", "label", "valueuom"]]
 
-    # chartevents 보강 (Albumin/Bilirubin/Hematocrit/Creatinine/Hemoglobin)
+    # chartevents enrich (Albumin/Bilirubin/Hematocrit/Creatinine/Hemoglobin)
     _prepare_chartevents_filtered(subject_ids)
     fdf = _load_chartevents_extract()
     if fdf is not None and not fdf.empty:
@@ -986,20 +986,20 @@ def build_labvalues_task(study_to_h5):
         if new_rows:
             new_df = pd.DataFrame(new_rows)
             dflabevents = pd.concat([dflabevents, new_df], ignore_index=True)
-        # 라벨명 통일 (mimic_preprocessing.py:359-365)
+        # label name case (mimic_preprocessing.py:359-365)
         dflabevents["label"] = dflabevents["label"].replace({
             "Creatinine (serum)": "Creatinine",
             "Hematocrit (serum)": "Hematocrit",
             "Total Bilirubin": "Bilirubin, Total",
         })
-        logging.info(f"  chartevents 보강 후 labevents rows: {len(dflabevents):,}")
+        logging.info(f"  chartevents enrich after labevents rows: {len(dflabevents):,}")
 
-    # 보강 후 다시 quantile filter
+    # enrich and then re- quantile filter
     dflabevents["valuenum"] = pd.to_numeric(dflabevents["valuenum"], errors="coerce")
     dflabevents = _quantile_filter(dflabevents, "label", "valuenum")
     dflabevents["storetime"] = pd.to_datetime(dflabevents["storetime"])
 
-    # ECG-time 기준 closest 1시간 매칭 (mimic_preprocessing.py:398-407)
+    # ECG-time (closest within ±1 h) (mimic_preprocessing.py:398-407)
     labs_subset = dflabevents[dflabevents["label"].isin(LAB_COLS)]
     merged = df_ecg[["subject_id", "study_id", "ecg_time", "strat_fold", "fold"]].merge(
         labs_subset, on="subject_id", how="left"
@@ -1024,14 +1024,14 @@ def build_labvalues_task(study_to_h5):
     save_regression_csv(
         "labvalues", wide, LAB_COLS,
         source_desc="labevents.csv.gz + d_labitems.csv.gz (18 lab labels) + "
-                    "chartevents 보강 (Creatinine/Hemoglobin/Hematocrit/Bilirubin/Albumin), "
-                    "ECG-time 기준 closest 1시간 매칭. "
-                    "mimic_preprocessing.py:124-154,344-372,398-407 재현.",
+                    "chartevents enrich (Creatinine/Hemoglobin/Hematocrit/Bilirubin/Albumin), "
+                    "ECG-time (closest within ±1 h). "
+                    "mimic_preprocessing.py:124-154,344-372,398-407 reproduction.",
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# 메인
+# main
 # ═══════════════════════════════════════════════════════════════
 ALL_TASKS = ["diagnostic", "sex", "age", "ecg_features",
              "deterioration", "mortality", "icu_admission",
@@ -1040,7 +1040,7 @@ ALL_TASKS = ["diagnostic", "sex", "age", "ecg_features",
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--all", action="store_true", help="전 태스크 생성")
+    parser.add_argument("--all", action="store_true", help="before task generate")
     parser.add_argument("--task", choices=ALL_TASKS, default=None)
     args = parser.parse_args()
 
@@ -1055,13 +1055,13 @@ def main():
 
     logging.info("Loading H5 study_id → filepath mapping…")
     study_to_h5 = load_h5_mapping()
-    logging.info(f"  매핑 entries: {len(study_to_h5):,}")
+    logging.info(f"  mapping entries: {len(study_to_h5):,}")
 
     for t in targets:
         if t == "diagnostic":
             build_diagnostic_tasks(study_to_h5)
         elif t == "sex" or t == "age":
-            # sex/age는 한 번에 빌드
+            # sex/age  in 
             if t == "sex":
                 build_sex_age_tasks(study_to_h5)
         elif t == "ecg_features":
@@ -1079,7 +1079,7 @@ def main():
         elif t == "labvalues":
             build_labvalues_task(study_to_h5)
 
-    logging.info("\n완료!")
+    logging.info("\ndone!")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """
 Trainer
 ========
-다운스트림 태스크 학습/평가 루프. DDP 지원.
+downstream task training/ . DDP support.
 """
 
 import os
@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 class DownstreamTrainer:
     """
-    다운스트림 태스크 Trainer (Single GPU + DDP 지원).
+    downstream task Trainer (Single GPU + DDP support).
 
     Args:
-        model:          DownstreamWrapper (또는 DDP-wrapped)
+        model:          DownstreamWrapper (or DDP-wrapped)
         train_loader:   DataLoader
         val_loader:     DataLoader
         test_loader:    DataLoader (optional)
@@ -37,12 +37,12 @@ class DownstreamTrainer:
         self.is_main = (self.rank == 0)
 
         self.device = torch.device(self.cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = model  # 이미 device에 올라가 있음
+        self.model = model  # already device in  
 
-        # DDP wrapper에서 원본 모듈 접근
+        # DDP wrapper from original module 
         self.model_unwrapped = model.module if hasattr(model, "module") else model
 
-        # 옵티마이저 (원본 모듈의 param_groups 사용)
+        #  (original module's param_groups use)
         lr = float(self.cfg.get("lr", 1e-3))
         disc_lr = float(self.cfg.get("discriminative_lr_factor", 0.1))
         param_groups = self.model_unwrapped.get_param_groups(lr, disc_lr)
@@ -51,7 +51,7 @@ class DownstreamTrainer:
             weight_decay=float(self.cfg.get("weight_decay", 1e-3)),
         )
 
-        # 스케줄러 (paper: const by default)
+        #  (paper: const by default)
         self.epochs = int(self.cfg.get("epochs", 100))
         warmup = int(self.cfg.get("warmup_epochs", 0))
         schedule = str(self.cfg.get("lr_schedule", "const"))
@@ -66,23 +66,34 @@ class DownstreamTrainer:
         self.warmup_epochs = warmup
         self.lr = lr
 
-        # Loss — task_type 분기 (paper main_lite_ecg.py:92-139 재현)
+        # Loss — task_type  (reproduces paper main_lite_ecg.py:92-139)
         self.task_type = str(self.cfg.get("task_type", "binary"))
+        self.num_cls = int(self.cfg.get("num_cls", 0))
+        self.num_reg = int(self.cfg.get("num_reg", 0))
+        self.report_groups = self.cfg.get("report_groups")  # dict for joint task per-group reporting
+        self.cls_cols = self.cfg.get("cls_cols")
+        self.reg_cols = self.cfg.get("reg_cols")
         if self.task_type == "regression":
-            # paper: F.l1_loss (MAE) — MSE 아님
+            # paper: F.l1_loss (MAE) — MSE
             self._loss_fn = self._regression_loss
         elif self.task_type == "multi-label-binary":
-            # NaN 마스킹 BCE — mds_ed의 missing label 처리
+            # NaN masking BCE — mds_ed's missing label handling
             self._loss_fn = self._masked_bce_loss
+        elif self.task_type == "classification_and_regression":
+            # paper main_lite_ecg.py:100-139: BCE(cls) + L1(reg), per-element NaN mask
+            if self.num_cls <= 0 or self.num_reg <= 0:
+                raise ValueError(
+                    "classification_and_regression requires num_cls and num_reg in trainer cfg")
+            self._loss_fn = self._joint_loss
         else:
-            # 'binary' 기본 — multi-label BCE (전체 라벨 0/1)
+            # 'binary' default — multi-label BCE (all label 0/1)
             self._loss_fn = nn.BCEWithLogitsLoss()
 
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.test_loader = test_loader
 
-        # 저장 (rank 0만)
+        # save (rank 0 only)
         self.save_dir = Path(self.cfg.get("save_dir", "./results"))
         if self.is_main:
             os.makedirs(self.save_dir, exist_ok=True)
@@ -92,7 +103,7 @@ class DownstreamTrainer:
         self.label_names = self.cfg.get("label_names")
 
     def train(self):
-        """전체 학습 루프"""
+        """all training """
         if self.is_main:
             logger.info(f"Training for {self.epochs} epochs on {self.device}")
             logger.info(f"  eval_mode: {self.model_unwrapped.eval_mode}")
@@ -101,7 +112,7 @@ class DownstreamTrainer:
                          f"val: {len(self.val_loader.dataset):,}")
 
         for epoch in range(self.epochs):
-            # DDP: epoch별 sampler 시드 설정
+            # DDP: epoch per sampler  config
             if self.use_ddp and hasattr(self.train_loader.sampler, "set_epoch"):
                 self.train_loader.sampler.set_epoch(epoch)
 
@@ -119,11 +130,14 @@ class DownstreamTrainer:
             if self.scheduler is not None and epoch >= self.warmup_epochs:
                 self.scheduler.step()
 
-            # Logging (rank 0만) — task_type별 primary metric
+            # Logging (rank 0 only) — task_type per primary metric
             if self.is_main:
                 if self.task_type == "regression":
-                    primary_key = "neg_mae_macro"   # neg_MAE (높을수록 좋음, MAE↓)
+                    primary_key = "neg_mae_macro"   # neg_MAE ( , MAE↓)
                     log_label = "neg_mae"
+                elif self.task_type == "classification_and_regression":
+                    primary_key = "neg_composite_score"  # paper: (1-macro_AUROC)+mae, lower=better → maximize neg
+                    log_label = "neg_composite"
                 else:
                     primary_key = "auroc_macro"
                     log_label = "auroc"
@@ -140,7 +154,12 @@ class DownstreamTrainer:
                     torch.save(self.model_unwrapped.state_dict(), self.save_dir / "best.pt")
 
         if self.is_main:
-            log_label = "neg_mae" if self.task_type == "regression" else "AUROC"
+            if self.task_type == "regression":
+                log_label = "neg_mae"
+            elif self.task_type == "classification_and_regression":
+                log_label = "neg_composite"
+            else:
+                log_label = "AUROC"
             logger.info(f"Best val {log_label}: {self.best_metric:.4f} at epoch {self.best_epoch}")
 
         # Test
@@ -148,15 +167,19 @@ class DownstreamTrainer:
             self.model_unwrapped.load_state_dict(
                 torch.load(self.save_dir / "best.pt", weights_only=True))
             test_metrics = self._eval_epoch(self.test_loader, "test")
-            primary_key = "neg_mae_macro" if self.task_type == "regression" else "auroc_macro"
-            log_label = "neg_mae" if self.task_type == "regression" else "AUROC"
+            if self.task_type == "regression":
+                primary_key, log_label = "neg_mae_macro", "neg_mae"
+            elif self.task_type == "classification_and_regression":
+                primary_key, log_label = "neg_composite_score", "neg_composite"
+            else:
+                primary_key, log_label = "auroc_macro", "AUROC"
             logger.info(f"Test {log_label}: {test_metrics.get(primary_key, 0):.4f}")
             return test_metrics
 
         return {"best_val": self.best_metric, "best_epoch": self.best_epoch}
 
     def _train_epoch(self, epoch):
-        """1 epoch 학습"""
+        """1 epoch training"""
         self.model.train()
         total_loss = 0
         n_batches = 0
@@ -167,7 +190,14 @@ class DownstreamTrainer:
             signal = batch["signal"].to(self.device)
             label = batch["label"].to(self.device)
 
-            logits = self.model(signal)
+            # Forward moryecg cache keys when present; non-moryecg encoders
+            # accept **_unused and ignore these.
+            extra = {}
+            if "ecg_filepath" in batch:
+                extra["ecg_filepath"] = batch["ecg_filepath"]
+            if "ecg_seg_idx" in batch:
+                extra["ecg_seg_idx"] = batch["ecg_seg_idx"]
+            logits = self.model(signal, **extra)
             loss = self._loss_fn(logits, label)
 
             self.optimizer.zero_grad()
@@ -177,7 +207,7 @@ class DownstreamTrainer:
             total_loss += loss.item()
             n_batches += 1
 
-        # DDP: loss를 all-reduce로 평균
+        # DDP: loss all-reduce by 
         avg_loss = total_loss / max(n_batches, 1)
         if self.use_ddp:
             loss_tensor = torch.tensor(avg_loss, device=self.device)
@@ -188,10 +218,10 @@ class DownstreamTrainer:
 
     @torch.no_grad()
     def _eval_epoch(self, loader, prefix="val"):
-        """평가 (rank 0에서만 전체 데이터로 평가).
+        """ (rank 0 from only all data by ).
 
-        Multi-window mode: 각 ECG가 N개 chunk로 쪼개져 있으면 batch에 ecg_id가
-        들어 있다. 모든 chunk 예측을 ecg_id별로 평균집계한 뒤 metric 계산
+        Multi-window mode: each ECG N chunk by  if present, batch in ecg_id
+         . all chunk example ecg_id per by   metric compute
         (paper §3.3 aggregate_predictions, aggregate_fn=np.mean).
         """
         self.model.eval()
@@ -205,10 +235,19 @@ class DownstreamTrainer:
             signal = batch["signal"].to(self.device)
             label = batch["label"]
 
-            logits = self.model(signal)
-            # regression: raw logits, classification: sigmoid 확률
+            extra = {}
+            if "ecg_filepath" in batch:
+                extra["ecg_filepath"] = batch["ecg_filepath"]
+            if "ecg_seg_idx" in batch:
+                extra["ecg_seg_idx"] = batch["ecg_seg_idx"]
+            logits = self.model(signal, **extra)
+            # regression: raw logits, classification: sigmoid,
+            # joint (cls+reg): sigmoid on first num_cls, raw on the rest
             if self.task_type == "regression":
                 preds = logits.cpu().numpy()
+            elif self.task_type == "classification_and_regression":
+                cls = torch.sigmoid(logits[:, :self.num_cls])
+                preds = torch.cat([cls, logits[:, self.num_cls:]], dim=1).cpu().numpy()
             else:
                 preds = torch.sigmoid(logits).cpu().numpy()
 
@@ -226,7 +265,7 @@ class DownstreamTrainer:
         all_targets = np.concatenate(all_targets, axis=0)
         all_ids = np.concatenate(all_ids, axis=0) if all_ids else None
 
-        # DDP: 모든 rank의 예측을 gather (rank 0에서 메트릭 계산)
+        # DDP: all rank's example gather (rank 0 from  compute)
         if self.use_ddp:
             all_preds, all_targets, all_ids = self._gather_predictions(
                 all_preds, all_targets, all_ids
@@ -248,16 +287,27 @@ class DownstreamTrainer:
                 all_preds = agg_preds
                 all_targets = agg_targets
 
-            metrics = evaluate_all(all_targets, all_preds, self.label_names,
-                                    task_type=self.task_type)
+            metrics = evaluate_all(
+                all_targets, all_preds, self.label_names,
+                task_type=self.task_type,
+                num_cls=self.num_cls if self.task_type == "classification_and_regression" else None,
+                cls_cols=self.cls_cols,
+                reg_cols=self.reg_cols,
+                report_groups=self.report_groups,
+            )
             result_path = self.save_dir / f"{prefix}_metrics.txt"
             with open(result_path, "w") as f:
                 for k, v in sorted(metrics.items()):
                     f.write(f"{k}: {v}\n")
 
-        # DDP: 메트릭을 broadcast — task_type별 primary metric
+        # DDP:  broadcast — task_type per primary metric
         if self.use_ddp:
-            primary_key = "neg_mae_macro" if self.task_type == "regression" else "auroc_macro"
+            if self.task_type == "regression":
+                primary_key = "neg_mae_macro"
+            elif self.task_type == "classification_and_regression":
+                primary_key = "neg_composite_score"
+            else:
+                primary_key = "auroc_macro"
             primary = torch.tensor(metrics.get(primary_key, 0.0), device=self.device)
             dist.broadcast(primary, src=0)
             if not self.is_main:
@@ -266,20 +316,20 @@ class DownstreamTrainer:
         return metrics
 
     def _gather_predictions(self, preds, targets, ids=None):
-        """모든 rank의 예측 (+ optional ecg_ids) 을 rank 0으로 gather"""
+        """all rank's example (+ optional ecg_ids) rank 0 as gather"""
         preds_t = torch.from_numpy(preds).to(self.device)
         targets_t = torch.from_numpy(targets).to(self.device)
         ids_t = (torch.from_numpy(ids).to(self.device).long()
                  if ids is not None else None)
 
-        # 각 rank의 데이터 크기가 다를 수 있으므로 크기 먼저 수집
+        # each rank's data size   size first, 
         local_size = torch.tensor(preds_t.shape[0], device=self.device)
         all_sizes = [torch.zeros_like(local_size) for _ in range(self.world_size)]
         dist.all_gather(all_sizes, local_size)
 
         max_size = max(s.item() for s in all_sizes)
 
-        # 패딩해서 같은 크기로 맞추기
+        #  to  same size by 
         if preds_t.shape[0] < max_size:
             pad_size = max_size - preds_t.shape[0]
             preds_t = torch.cat([preds_t, torch.zeros(pad_size, *preds_t.shape[1:], device=self.device)])
@@ -296,7 +346,7 @@ class DownstreamTrainer:
             dist.all_gather(gathered_ids, ids_t)
 
         if self.is_main:
-            # 패딩 제거
+            #  remove
             all_p, all_t, all_i = [], [], []
             for i, size in enumerate(all_sizes):
                 n = size.item()
@@ -311,17 +361,17 @@ class DownstreamTrainer:
 
         return preds, targets, ids
 
-    # ── Loss helpers (paper main_lite_ecg.py:92-139 재현) ──────────────
+    # ── Loss helpers (reproduces paper main_lite_ecg.py:92-139) ──────────────
     @staticmethod
     def _masked_bce_loss(logits, targets):
-        """NaN을 가진 multi-label binary용 — NaN 위치는 loss에 미반영.
-        paper main_lite_ecg.py:114-118 재현 (per-position mask).
+        """NaN  multi-label binary (for) — NaN location loss in .
+        reproduces paper main_lite_ecg.py:114-118 (per-position mask).
         """
         import torch.nn.functional as F
         valid = ~torch.isnan(targets)
         if not valid.any():
             return torch.zeros(1, device=logits.device, requires_grad=True).squeeze()
-        # NaN 위치는 0으로 대체하여 BCE 입력 가능, mask로 제거
+        # NaN location 0 as  BCE input available, mask by remove
         targets_safe = torch.where(valid, targets, torch.zeros_like(targets))
         loss_per_elem = F.binary_cross_entropy_with_logits(
             logits, targets_safe, reduction="none"
@@ -330,7 +380,7 @@ class DownstreamTrainer:
 
     @staticmethod
     def _regression_loss(logits, targets):
-        """L1 loss (MAE) with NaN masking. paper main_lite_ecg.py:99,128-133 재현."""
+        """L1 loss (MAE) with NaN masking. reproduces paper main_lite_ecg.py:99,128-133."""
         import torch.nn.functional as F
         valid = ~torch.isnan(targets)
         if not valid.any():
@@ -338,3 +388,34 @@ class DownstreamTrainer:
         targets_safe = torch.where(valid, targets, torch.zeros_like(targets))
         loss_per_elem = F.l1_loss(logits, targets_safe, reduction="none")
         return (loss_per_elem * valid.float()).sum() / valid.float().sum().clamp(min=1.0)
+
+    def _joint_loss(self, logits, targets):
+        """Composite BCE(cls) + L1(reg) with per-element NaN masking.
+        Reproduces paper main_lite_ecg.py:100-139 (classification_and_regression_loss).
+        Output split: logits[:, :num_cls] = cls logits, logits[:, num_cls:] = reg.
+        """
+        import torch.nn.functional as F
+        nc = self.num_cls
+        cls_logits = logits[:, :nc]
+        reg_logits = logits[:, nc:]
+        cls_targs = targets[:, :nc]
+        reg_targs = targets[:, nc:]
+
+        cls_valid = ~torch.isnan(cls_targs)
+        if cls_valid.any():
+            cls_safe = torch.where(cls_valid, cls_targs, torch.zeros_like(cls_targs))
+            cls_per = F.binary_cross_entropy_with_logits(
+                cls_logits, cls_safe, reduction="none")
+            cls_loss = (cls_per * cls_valid.float()).sum() / cls_valid.float().sum().clamp(min=1.0)
+        else:
+            cls_loss = torch.zeros((), device=logits.device)
+
+        reg_valid = ~torch.isnan(reg_targs)
+        if reg_valid.any():
+            reg_safe = torch.where(reg_valid, reg_targs, torch.zeros_like(reg_targs))
+            reg_per = F.l1_loss(reg_logits, reg_safe, reduction="none")
+            reg_loss = (reg_per * reg_valid.float()).sum() / reg_valid.float().sum().clamp(min=1.0)
+        else:
+            reg_loss = torch.zeros((), device=logits.device)
+
+        return cls_loss + reg_loss

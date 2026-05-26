@@ -6,3 +6,4 @@ from .merl import MerlResNetEncoder
 from .ecgfm_ked import EcgFmKEDEncoder
 from .hubert_ecg import HuBERTECGEncoder
 from .cpc import CPCEncoder
+from .moryecg import MoRyECGEncoder

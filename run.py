@@ -1,30 +1,31 @@
 """
 ECG Downstream Benchmark
 =========================
-H5 기반 ECG 다운스트림 태스크 벤치마크.
+H5-backed ECG downstream task benchmark.
 
-사용법:
+Usage:
   # Single GPU
   python run.py --task ptbxl_super_jepa --eval_mode linear_probe \
       --encoder_cls src.encoders.ecg_jepa.ECGJEPAEncoder \
       --encoder_ckpt weights/encoder.pt
 
-  # Multi GPU (예: 4장)
+  # Multi-GPU (e.g., 4 cards)
   torchrun --nproc_per_node=4 run.py --task ptbxl_super_jepa \
       --eval_mode finetune_linear \
       --encoder_cls src.encoders.ecg_jepa.ECGJEPAEncoder \
       --encoder_ckpt weights/encoder.pt
 
-  # 특정 GPU 지정
+  # select a specific GPU
   CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 run.py ...
 
-  # 더미 인코더 테스트
+  # dummy encoder test
   python run.py --task ptbxl_super_jepa --eval_mode linear_probe --dummy
 """
 
 import os
 import sys
 import argparse
+import json
 import logging
 import yaml
 import importlib
@@ -38,7 +39,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 import numpy as np
 
-# src 경로 추가
+# add src to path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -49,7 +50,7 @@ from src.trainer import DownstreamTrainer
 
 
 # ═══════════════════════════════════════════════════════════════
-# DDP 유틸
+# DDP utilities
 # ═══════════════════════════════════════════════════════════════
 def is_distributed():
     return dist.is_available() and dist.is_initialized()
@@ -68,7 +69,7 @@ def is_main_process():
 
 
 def setup_distributed():
-    """torchrun이 설정한 환경변수로 DDP 초기화"""
+    """init DDP from torchrun-configured environment variables"""
     if "RANK" not in os.environ:
         return False
     dist.init_process_group(backend="nccl")
@@ -83,10 +84,10 @@ def cleanup_distributed():
 
 
 # ═══════════════════════════════════════════════════════════════
-# 더미 인코더 (테스트용)
+# dummy encoder (for testing)
 # ═══════════════════════════════════════════════════════════════
 class DummyEncoder(torch.nn.Module):
-    """테스트용 더미 인코더. GAP → (B, feature_dim)"""
+    """dummy encoder for testing. GAP → (B, feature_dim)"""
     def __init__(self, n_leads=12, feature_dim=256):
         super().__init__()
         self.conv = torch.nn.Sequential(
@@ -105,7 +106,7 @@ class DummyEncoder(torch.nn.Module):
 
 
 # ═══════════════════════════════════════════════════════════════
-# Config 로딩
+# Config loading
 # ═══════════════════════════════════════════════════════════════
 def _expand_env_vars(value):
     """Recursively expand ${VAR} and $VAR references in str values inside cfg."""
@@ -121,9 +122,9 @@ def _expand_env_vars(value):
 def load_config(task_name: str, overrides: dict = None) -> dict:
     cfg_dir = SCRIPT_DIR / "configs"
 
-    # ECG_DATA_ROOT 가 unset이면 원래 서버 경로로 default — 기존 사용자 backward-compat.
-    # 다른 환경에선 `export ECG_DATA_ROOT=/your/data/root` 로 override.
-    os.environ.setdefault("ECG_DATA_ROOT", "/home/irteam/ddn-opendata1")
+    # default ECG_DATA_ROOT to a placeholder when unset.
+    # in another environment, `export ECG_DATA_ROOT=/your/data/root`  to override.
+    os.environ.setdefault("ECG_DATA_ROOT", "/path/to/ecg_data")
 
     default_path = cfg_dir / "default.yaml"
     with open(default_path) as f:
@@ -150,7 +151,7 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
     # 1) ${VAR} env var expansion (e.g., ${ECG_DATA_ROOT}/h5/...).
     cfg = _expand_env_vars(cfg)
 
-    # 2) 상대경로 resolve — repo 안의 라벨파일 등 ('labels/x.csv'은 SCRIPT_DIR 기준).
+    # 2) relative path resolve — inside the repo labelfile etc. ('labels/x.csv' SCRIPT_DIR reference).
     data_section = cfg.get("data", {})
     for key in ("label_csv", "table_csv", "h5_root", "metadata_csv"):
         v = data_section.get(key)
@@ -166,15 +167,15 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
 
 def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
     """
-    Encoder를 로드합니다.
-    checkpoint는 adapter의 __init__(checkpoint=...) 으로 전달합니다.
-    adapter가 자체 _load_checkpoint을 가지면 그걸 사용합니다.
+    Load the encoder.
+    checkpoint adapter's __init__(checkpoint=...)  as before.
+    adapter  _load_checkpoint  then  use.
     """
     module_path, cls_name = encoder_cls.rsplit(".", 1)
     module = importlib.import_module(module_path)
     cls = getattr(module, cls_name)
 
-    # checkpoint를 adapter 생성자에 전달
+    # checkpoint adapter generate in before
     if encoder_ckpt:
         kwargs["checkpoint"] = encoder_ckpt
     encoder = cls(**kwargs)
@@ -196,18 +197,18 @@ def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
 # ═══════════════════════════════════════════════════════════════
 def build_dataloaders_ddp(data_cfg, split="train"):
     """
-    DDP를 고려한 DataLoader 생성.
+    DDP  DataLoader generate.
 
     loader_type:
-      - 'h5' (default): H5ECGDataset (fold 기반 split)
-      - 'echonext_numpy': EchoNextDataset (.npy + metadata.csv, 사전 정의된 split 사용)
+      - 'h5' (default): H5ECGDataset (fold based split)
+      - 'echonext_numpy': EchoNextDataset (.npy + metadata.csv, before definitionsed split use)
     """
     from torch.utils.data import DataLoader
 
     loader_type = data_cfg.get("loader_type", "h5")
 
     if loader_type == "echonext_numpy":
-        # split_overrides: smoke test에서 train→val 같은 매핑용
+        # split_overrides: smoke test from train→val same mapping (for)
         md_split = data_cfg.get("split_overrides", {}).get(split, split)
         ds = EchoNextDataset(
             waveform_npy=data_cfg["waveforms"][split],
@@ -245,13 +246,15 @@ def build_dataloaders_ddp(data_cfg, split="train"):
             task_type=data_cfg.get("task_type", "binary"),
             target_mean=data_cfg.get("target_mean"),
             target_std=data_cfg.get("target_std"),
+            cls_cols=data_cfg.get("cls_cols"),
+            reg_cols=data_cfg.get("reg_cols"),
         )
 
     sampler = None
     shuffle = (split == "train")
     if is_distributed():
         sampler = DistributedSampler(ds, shuffle=shuffle)
-        shuffle = False  # sampler가 shuffle 담당
+        shuffle = False  # sampler shuffle 
 
     nw = int(os.environ.get("NUM_WORKERS", data_cfg.get("num_workers", 4)))
     loader = DataLoader(
@@ -269,7 +272,7 @@ def build_dataloaders_ddp(data_cfg, split="train"):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 메인
+# main
 # ═══════════════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser(description="ECG Downstream Benchmark")
@@ -293,12 +296,12 @@ def main():
 
     args = parser.parse_args()
 
-    # DDP 초기화
+    # DDP init
     use_ddp = setup_distributed()
     rank = get_rank()
     world_size = get_world_size()
 
-    # Logging (rank 0만)
+    # Logging (rank 0 only)
     if is_main_process():
         logging.basicConfig(level=logging.INFO,
                             format="%(asctime)s [%(levelname)s] %(message)s")
@@ -343,9 +346,9 @@ def main():
     if is_main_process():
         logging.info(f"Encoder feature_dim={feature_dim}")
 
-    # ── Multi-window 확장 (paper §3.3) ──
-    # 인코더가 chunk_seconds를 노출하면 dataset이 ECG 1개를 N chunk로 쪼갬.
-    # → 학습 데이터 N배 + eval 시 ecg_id 평균집계.
+    # ── Multi-window extension (paper §3.3) ──
+    # encoder chunk_seconds then dataset ECG 1 N chunk by .
+    # → training data N + eval at ecg_id .
     chunk_seconds = getattr(encoder, "chunk_seconds", None)
     if chunk_seconds is not None and data_cfg.get("target_fs"):
         chunk_length = int(round(chunk_seconds * float(data_cfg["target_fs"])))
@@ -367,12 +370,12 @@ def main():
         head_kwargs=head_cfg,
     )
 
-    # Device 설정
+    # Device config
     if use_ddp:
         device = torch.device(f"cuda:{rank}")
         model = model.to(device)
         model = DDP(model, device_ids=[rank], find_unused_parameters=False)
-        # DDP wrapper에서 원본 모듈 접근
+        # DDP wrapper from original module 
         model_unwrapped = model.module
     else:
         device = torch.device(train_cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
@@ -389,7 +392,7 @@ def main():
     fold_col = fold_cfg.get("col", "strat_fold")
     auto_split = fold_cfg.get("auto_split", True)
 
-    # CLI override가 없고 auto_split이면 table CSV에서 strat_fold 자동 감지
+    # CLI override  auto_split if so, table CSV from strat_fold automatic 
     if args.train_folds:
         data_cfg["fold_col"] = fold_col
         data_cfg["train_folds"] = [int(x) for x in args.train_folds.split(",")]
@@ -401,8 +404,8 @@ def main():
         data_cfg["test_folds"] = [int(x) for x in args.test_folds.split(",")]
 
     if auto_split and not args.train_folds and not args.val_folds:
-        # table CSV → label CSV 순으로 strat_fold 탐색
-        # paper의 split: strat_fold ∈ [0,18) train / 18 val / 19 test (18/1/1)
+        # table CSV → label CSV order as strat_fold search
+        # paper's split: strat_fold ∈ [0,18) train / 18 val / 19 test (18/1/1)
         table_path = data_cfg.get("table_csv", "")
         label_path = data_cfg.get("label_csv", "")
 
@@ -429,30 +432,68 @@ def main():
                 src = "table" if fold_source == table_path else "label"
                 logging.info(f"Auto fold split [{src}]: train({train_n:,}) / val({val_n:,}) / test({test_n:,})")
         elif is_main_process():
-            logging.warning(f"⚠ {fold_col} 컬럼이 table/label CSV 어디에도 없음 — split 안 됨")
+            logging.warning(f"⚠ {fold_col} column table/label CSV  none — split inside  ")
 
-    # task_type 전달 (binary / multi-label-binary / regression)
+    # task_type before (binary / multi-label-binary / regression / classification_and_regression)
     task_type = task_cfg.get("task_type", "binary")
     data_cfg["task_type"] = task_type
 
+    # ── Joint task: pull cls_cols / reg_cols / report_groups from schema JSON ──
+    # (paper main_lite_ecg.py: classification_and_regression with 158+6+1 cls + 35 reg)
+    if task_type == "classification_and_regression":
+        schema_path = data_cfg.get("schema_json")
+        if not schema_path:
+            # default: replace .csv with .json next to label_csv
+            label_csv = data_cfg.get("label_csv", "")
+            schema_path = str(Path(label_csv).with_suffix(".json")) if label_csv else None
+        if schema_path and os.path.exists(schema_path):
+            with open(schema_path) as fh:
+                schema = json.load(fh)
+            if "cls_cols" not in data_cfg:
+                data_cfg["cls_cols"] = schema.get("cls_cols", [])
+            if "reg_cols" not in data_cfg:
+                data_cfg["reg_cols"] = schema.get("reg_cols", [])
+            if "report_groups" not in data_cfg:
+                data_cfg["report_groups"] = schema.get("report_groups", {})
+        cls_cols = data_cfg.get("cls_cols") or []
+        reg_cols = data_cfg.get("reg_cols") or []
+        num_cls = len(cls_cols)
+        num_reg = len(reg_cols)
+        # head output dim = cls + reg
+        num_classes = num_cls + num_reg
+        task_cfg["num_cls"] = num_cls
+        task_cfg["num_reg"] = num_reg
+        if is_main_process():
+            logging.info(
+                f"  Joint MIMIC task: num_cls={num_cls}, num_reg={num_reg}, "
+                f"total head dim={num_classes}")
+
     # ── Regression target z-normalization (paper-faithful: train fold stats) ──
-    # IMPORTANT: dataloader 생성 전에 target_mean/std를 data_cfg에 넣어야 함
-    if task_type == "regression" and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
+    # IMPORTANT: dataloader generate before in target_mean/std data_cfg in
+    # joint task: z-norm only the reg subset (cls part stays 0/1/NaN)
+    znorm_cols = None
+    if task_type == "regression":
+        znorm_cols = data_cfg.get("label_cols")
+    elif task_type == "classification_and_regression":
+        znorm_cols = data_cfg.get("reg_cols")
+    if znorm_cols and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
         try:
             label_df_full = pd.read_csv(data_cfg["label_csv"], low_memory=False)
             fold_col = data_cfg.get("fold_col", "strat_fold")
             train_rows = label_df_full[label_df_full[fold_col].isin(data_cfg["train_folds"])]
-            label_cols = data_cfg.get("label_cols")
-            if label_cols and all(c in train_rows.columns for c in label_cols):
-                t_mean = train_rows[label_cols].mean(axis=0).values.astype("float32")
-                t_std = train_rows[label_cols].std(axis=0).values.astype("float32")
+            if all(c in train_rows.columns for c in znorm_cols):
+                # ddof=0 to match sklearn.StandardScaler (paper mimic_preprocessing.py:431)
+                t_mean = train_rows[znorm_cols].mean(axis=0).values.astype("float32")
+                t_std = train_rows[znorm_cols].std(axis=0, ddof=0).values.astype("float32")
                 data_cfg["target_mean"] = t_mean.tolist()
                 data_cfg["target_std"] = t_std.tolist()
                 if is_main_process():
-                    logging.info(f"  Regression z-norm (train fold): mean={t_mean.tolist()}, std={t_std.tolist()}")
+                    logging.info(f"  Regression z-norm ({len(znorm_cols)} cols, train fold, ddof=0):")
+                    logging.info(f"    mean[:5]={t_mean[:5].tolist()}")
+                    logging.info(f"    std[:5]={t_std[:5].tolist()}")
         except Exception as e:
             if is_main_process():
-                logging.warning(f"  z-norm 계산 실패 (그대로 진행): {e}")
+                logging.warning(f"  z-norm compute failure (as-is rows): {e}")
 
     train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
     val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
@@ -471,20 +512,29 @@ def main():
                      + (f" | Test: {len(test_loader.dataset):,}" if test_loader else ""))
 
     # ── Train ──
+    if task_type == "classification_and_regression":
+        label_names = list(data_cfg.get("cls_cols", [])) + list(data_cfg.get("reg_cols", []))
+    else:
+        label_names = data_cfg.get("label_cols")
     trainer_cfg = {
         **train_cfg,
         "save_dir": save_dir,
-        "label_names": data_cfg.get("label_cols"),
+        "label_names": label_names,
         "device": str(device),
         "use_ddp": use_ddp,
         "rank": rank,
         "world_size": world_size,
         "task_type": task_type,
+        "num_cls": task_cfg.get("num_cls", 0),
+        "num_reg": task_cfg.get("num_reg", 0),
+        "cls_cols": data_cfg.get("cls_cols"),
+        "reg_cols": data_cfg.get("reg_cols"),
+        "report_groups": data_cfg.get("report_groups"),
     }
     trainer = DownstreamTrainer(model, train_loader, val_loader, test_loader, trainer_cfg)
     results = trainer.train()
 
-    # ── 통합 CSV에 append (rank 0만) ──
+    # ── merge CSV in append (rank 0 only) ──
     if is_main_process():
         _append_result_csv(
             args=args,
@@ -509,10 +559,10 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
                       save_dir, train_size, val_size, test_size, results,
                       task_type="binary"):
     """
-    각 실험 결과를 results_all.csv에 row로 추가 (thread-safe append).
-    save_dir 상위 폴더(예: results/{timestamp}/)에 저장됩니다.
+    each  results results_all.csv in row by add (thread-safe append).
+    save_dir above directory(example: results/{timestamp}/) save.
 
-    task_type별 metric 분기:
+    task_type per metric :
       - binary / multi-label-binary: AUROC / AUPRC / F1
       - regression: MAE / MSE / RMSE / R² / neg_MAE
     """
@@ -523,11 +573,11 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
     parent = save_path.parent
     csv_path = parent / "results_all.csv"
 
-    # 모델 이름 (encoder_cls → 마지막 클래스명)
+    # model name (encoder_cls →  class)
     model_name = encoder_cls.rsplit(".", 1)[-1] if "." in encoder_cls else encoder_cls
     model_name = model_name.replace("Encoder", "").lower()
 
-    # test_metrics.txt 읽기
+    # test_metrics.txt read
     test_m = _read_metrics(save_path / "test_metrics.txt")
     val_m = _read_metrics(save_path / "val_metrics.txt")
 
@@ -555,10 +605,21 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
         "test_rmse_macro":  test_m.get("rmse_macro", float("nan")),
         "test_r2_macro":    test_m.get("r2_macro", float("nan")),
         "val_neg_mae_macro": val_m.get("neg_mae_macro", float("nan")),
+        # Joint task (classification_and_regression) — paper composite score
+        "test_composite_score": test_m.get("composite_score", float("nan")),
+        "test_auroc_macro_cls": test_m.get("auroc_macro_cls", float("nan")),
+        "test_mae_global_reg":  test_m.get("mae_global_reg", float("nan")),
         "save_dir": str(save_dir),
     }
+    # per-sub-task metrics for joint tasks — derived dynamically from test_metrics.txt
+    if task_type == "classification_and_regression":
+        for key, val in test_m.items():
+            if key.endswith("_auroc_macro") and key != "auroc_macro" and key != "auroc_macro_cls":
+                row[f"test_{key}"] = val
+            elif key.endswith("_mae_macro") or key.endswith("_mae_global"):
+                row[f"test_{key}"] = val
 
-    # file lock + append (여러 실험 동시 실행 대비)
+    # file lock + append (  concurrent run )
     new_file = not csv_path.exists()
     with open(csv_path, "a", newline="") as f:
         try:
@@ -573,7 +634,7 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
 
 
 def _read_metrics(path):
-    """metrics txt 파일에서 key: value 파싱"""
+    """metrics txt file from key: value parsing"""
     from pathlib import Path
     if not Path(path).exists():
         return {}

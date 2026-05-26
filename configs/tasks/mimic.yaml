@@ -1,0 +1,29 @@
+# MIMIC-IV-ECG joint task (paper-faithful)
+# ------------------------------------------------------------
+# Reproduces ecg-fm-benchmarking/code/main_lite_ecg.py task =
+# 'classification_and_regression' for the full MIMIC table.
+#
+# Output dims: 158 cardiac + 918 noncardiac + 6 deterioration + 7 mortality +
+#              2 icu + 1 sex = 1092 cls + 35 reg = 1127 total.
+# Cohort: is_diagnostic==1 (~116k ECGs).
+# Loss: BCE(cls part, NaN-masked) + L1(reg part, NaN-masked).
+# Reg z-norm: per-column StandardScaler fit on train fold (strat_fold 0..17).
+# Primary metric: composite_score = (1 - macro_AUROC_cls) + global_MAE_reg.
+# Per-sub-task reporting: cardiac / noncardiac / deterioration / mortality / icu /
+#                          sex / age / biometrics / ecg_features / labvalues / vitals.
+#
+# cls_cols / reg_cols / report_groups are auto-loaded at runtime from the
+# schema JSON next to label_csv (labels/mimic_paper_labels.json).
+data:
+  batch_size: 64
+  h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
+  label_csv: labels/mimic_paper_labels.csv
+  normalize: false
+  num_workers: 8
+  table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
+  target_fs: 500
+  target_length: 5000
+task:
+  name: mimic
+  num_classes: 1127   # 1092 cls + 35 reg; overwritten at runtime from schema
+  task_type: classification_and_regression

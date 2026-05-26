@@ -1,16 +1,16 @@
 """
 Model Wrapper
 ==============
-어떤 ECG encoder든 통일된 인터페이스로 감싸서 다운스트림 태스크에 사용합니다.
+ ECG encoder caseed is  downstream task in use.
 
-Encoder 요구사항:
+Encoder :
   forward(x) → (sequence_features, pooled_features)
     - x:                  (batch, n_leads, seq_len)
-    - sequence_features:  (batch, seq_len', embed_dim) 또는 None
+    - sequence_features:  (batch, seq_len', embed_dim) or None
     - pooled_features:    (batch, feature_dim)
 
-  만약 encoder가 pooled만 반환하면 sequence_features=None 가능.
-  만약 encoder가 하나의 tensor만 반환하면 자동으로 GAP 적용.
+   only encoder pooled only returnthen sequence_features=None available.
+   only encoder one of tensor only returnthen automatically GAP apply.
 
 Eval modes:
   - linear_probe:         Frozen encoder + Linear head
@@ -18,6 +18,8 @@ Eval modes:
   - finetune_linear:      Full finetune + Linear head
   - finetune_attention:   Full finetune + Attention Pooling head
 """
+
+import inspect
 
 import torch
 import torch.nn as nn
@@ -80,12 +82,35 @@ class DownstreamWrapper(nn.Module):
                                    **(head_kwargs or {}))
             self.use_seq_features = False
 
+        # Pre-compute which extra kwargs the encoder.forward will accept.
+        # Most encoders only take `x`; moryecg additionally takes `ecg_filepath`
+        # and `ecg_seg_idx` for cache lookup. Filtering here lets the trainer
+        # always pass them without breaking other encoders.
+        try:
+            sig = inspect.signature(self.encoder.forward)
+            params = sig.parameters
+            self._encoder_accepts_var_kw = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            self._encoder_param_names = set(params.keys())
+        except (TypeError, ValueError):
+            self._encoder_accepts_var_kw = True
+            self._encoder_param_names = set()
+
+    def _filter_kwargs(self, kwargs):
+        """Drop kwargs the encoder.forward does not accept."""
+        if self._encoder_accepts_var_kw:
+            return kwargs
+        return {k: v for k, v in kwargs.items() if k in self._encoder_param_names}
+
     def forward(self, x, **kwargs):
         """
         x: (batch, n_leads, seq_len)
         → (batch, num_classes)
         """
         x = torch.nan_to_num(x)
+
+        kwargs = self._filter_kwargs(kwargs)
 
         # Encoder forward
         if self.is_frozen:
@@ -94,7 +119,7 @@ class DownstreamWrapper(nn.Module):
         else:
             enc_out = self.encoder(x, **kwargs)
 
-        # Encoder output 파싱
+        # Encoder output parsing
         seq_feat, pooled_feat = self._parse_encoder_output(enc_out)
 
         # Head
@@ -107,11 +132,11 @@ class DownstreamWrapper(nn.Module):
 
     def _parse_encoder_output(self, enc_out):
         """
-        Encoder 출력을 (sequence_features, pooled_features)로 정규화.
+        Encoder output (sequence_features, pooled_features) by normalization.
 
-        지원 패턴:
-          1. tuple (seq_feat, pooled_feat) → 그대로
-          2. dict {"seq": ..., "pooled": ...} → 추출
+        support :
+          1. tuple (seq_feat, pooled_feat) → as-is
+          2. dict {"seq": ..., "pooled": ...} → extract
           3. single tensor (B, D) → (None, pooled)
           4. single tensor (B, L, D) → (seq, GAP(seq))
         """
@@ -143,14 +168,14 @@ class DownstreamWrapper(nn.Module):
 
     def get_param_groups(self, lr: float, discriminative_lr_factor: float = 0.1):
         """
-        계층별 discriminative LR parameter groups.
+         per discriminative LR parameter groups.
 
-        Encoder가 get_layer_groups()를 구현하면 3단계 LR 적용:
+        Encoder get_layer_groups() then 3stage LR apply:
           - Head:                lr
           - Predictor/Top:       lr × factor
           - Encoder/Early:       lr × factor²
 
-        미구현 시 2단계:
+         at 2stage:
           - Head:    lr
           - Encoder: lr × factor
         """
@@ -160,7 +185,7 @@ class DownstreamWrapper(nn.Module):
         if self.is_frozen:
             return [{"params": head_params, "lr": lr}]
 
-        # encoder가 get_layer_groups()를 구현하면 사용
+        # encoder get_layer_groups() then use
         if hasattr(self.encoder, "get_layer_groups"):
             groups = self.encoder.get_layer_groups()
             # groups: {"early": [...], "late": [...]} or list of param lists
@@ -178,7 +203,7 @@ class DownstreamWrapper(nn.Module):
                     result.append({"params": g, "lr": lr * (f ** (i + 1))})
                 return result
 
-        # fallback: 2단계
+        # fallback: 2stage
         encoder_params = list(self.encoder.parameters())
         return [
             {"params": head_params, "lr": lr},
@@ -186,7 +211,7 @@ class DownstreamWrapper(nn.Module):
         ]
 
     def train(self, mode=True):
-        """Frozen 모드에서는 encoder를 항상 eval로 유지"""
+        """Frozen mode from encoder above eval keep"""
         super().train(mode)
         if self.is_frozen:
             self.encoder.eval()

@@ -1,30 +1,23 @@
 #!/usr/bin/env python3
-"""results/{TS}/ 의 모든 run에서 test/val metric을 읽어 CSV로 정리.
+"""results/{TS}/ of all run from test/val metric  CSV by .
 
-- binary task (sex 등): test_AUROC, test_AUPRC, test_F1
+- binary task (sex etc.): test_AUROC, test_AUPRC, test_F1
 - regression task (age, biometrics, ecg_features, labvalues, vitals): test_MAE, test_R2
-- test가 없으면 val로 fallback
+- test if absent, val by fallback
 """
 import argparse
 import csv
 import re
 from pathlib import Path
 
-DIR_RE = re.compile(r'^(?P<model>.+?)_(?P<task>mimic_[a-z_]+?)_(?P<mode>linear_probe|attention_probe|finetune_linear|finetune_attention)$')
+DIR_RE = re.compile(r'^(?P<model>.+?)_(?P<task>mimic(?:_[a-z_]+)?)_(?P<mode>linear_probe|attention_probe|finetune_linear|finetune_attention)$')
 
 # task → task_type
+# Paper-faithful MIMIC: single joint task (classification_and_regression).
+# Per-sub-task metrics are reported as <group>_auroc_macro / <group>_mae_macro
+# inside the same test_metrics.txt.
 TASK_TYPE = {
-    "mimic_sex": "binary",
-    "mimic_cardiac": "multi_label_binary",
-    "mimic_noncardiac": "multi_label_binary",
-    "mimic_deterioration": "multi_label_binary",
-    "mimic_mortality": "multi_label_binary",
-    "mimic_icu_admission": "multi_label_binary",
-    "mimic_age": "regression",
-    "mimic_biometrics": "regression",
-    "mimic_ecg_features": "regression",
-    "mimic_labvalues": "regression",
-    "mimic_vitals": "regression",
+    "mimic": "classification_and_regression",
 }
 
 
@@ -77,6 +70,42 @@ def main():
         # prefer test, fallback to val
         m_dict = test_m if test_m else val_m
         split = "test" if test_m else ("val" if val_m else "none")
+
+        if ttype == "classification_and_regression":
+            # Paper joint MIMIC: emit one row per sub-group sliced from the same joint metric file.
+            sub_groups = [
+                ("mimic_cardiac",       "cls", "cardiac"),
+                ("mimic_noncardiac",    "cls", "noncardiac"),
+                ("mimic_deterioration", "cls", "deterioration"),
+                ("mimic_mortality",     "cls", "mortality"),
+                ("mimic_icu",           "cls", "icu"),
+                ("mimic_sex",           "cls", "sex"),
+                ("mimic_age",           "reg", "age"),
+                ("mimic_biometrics",    "reg", "biometrics"),
+                ("mimic_ecg_features",  "reg", "ecg_features"),
+                ("mimic_labvalues",     "reg", "labvalues"),
+                ("mimic_vitals",        "reg", "vitals"),
+            ]
+            for sub_task, kind, prefix in sub_groups:
+                if kind == "cls":
+                    rows.append({
+                        "model": model, "task": sub_task, "mode": mode,
+                        "task_type": "multi_label_binary", "split": split,
+                        "AUROC": fmt(m_dict.get(f"{prefix}_auroc_macro")) if m_dict.get(f"{prefix}_auroc_macro") is not None else "",
+                        "AUPRC": fmt(m_dict.get(f"{prefix}_auprc_macro")) if m_dict.get(f"{prefix}_auprc_macro") is not None else "",
+                        "F1":    fmt(m_dict.get(f"{prefix}_f1_macro")) if m_dict.get(f"{prefix}_f1_macro") is not None else "",
+                        "MAE": "", "R2": "", "RMSE": "",
+                    })
+                else:
+                    rows.append({
+                        "model": model, "task": sub_task, "mode": mode,
+                        "task_type": "regression", "split": split,
+                        "AUROC": "", "AUPRC": "", "F1": "",
+                        "MAE":  fmt(m_dict.get(f"{prefix}_mae_macro")) if m_dict.get(f"{prefix}_mae_macro") is not None else "",
+                        "R2":   fmt(m_dict.get(f"{prefix}_r2_macro")) if m_dict.get(f"{prefix}_r2_macro") is not None else "",
+                        "RMSE": fmt(m_dict.get(f"{prefix}_rmse_macro")) if m_dict.get(f"{prefix}_rmse_macro") is not None else "",
+                    })
+            continue
 
         if ttype == "regression":
             primary = m_dict.get("mae_macro", "")

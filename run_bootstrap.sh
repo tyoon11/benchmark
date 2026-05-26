@@ -1,30 +1,30 @@
 #!/bin/bash
 # =============================================================
-# 경험적 부트스트랩 일괄 실행
+#  bootstrap batch run
 #
-# 1) 각 result 폴더(<model>_<task>_<mode>)에 대해 best.pt 로드
-#    → test set 추론 → preds.npy/targets.npy/ids.npy 저장
-# 2) 단일-모델 95% CI (n=1000)
-# 3) (task, mode)별 pairwise diff CI + tied-rank
+# 1) each result directory(<model>_<task>_<mode>) for best.pt load
+#    → test set inference → preds.npy/targets.npy/ids.npy save
+# 2) single-model 95% CI (n=1000)
+# 3) (task, mode) pairwise diff CI + tied-rank
 #
-# 사용법:
-#   bash run_bootstrap.sh                                                # default 폴더
-#   bash run_bootstrap.sh /path/to/results/20260428_203028                # 명시
-#   bash run_bootstrap.sh /path/to/results/20260428_203028 "0,1,2,3"      # 멀티 GPU
-#   FILTER=cpc bash run_bootstrap.sh /path/to/results/...                 # 부분 추출만
-#   SKIP_EXTRACT=1 bash run_bootstrap.sh /path/to/results/...             # 추출 skip
+# Usage:
+#   bash run_bootstrap.sh                                                # default directory
+#   bash run_bootstrap.sh /path/to/results/20260428_203028                # 
+#   bash run_bootstrap.sh /path/to/results/20260428_203028 "0,1,2,3"      #  GPU
+#   FILTER=cpc bash run_bootstrap.sh /path/to/results/...                 #  extract only
+#   SKIP_EXTRACT=1 bash run_bootstrap.sh /path/to/results/...             # extract skip
 #
-# 옵션 환경변수:
+# option environment variable:
 #   N_ITERS         (default 1000)
-#   WORKERS         CPU 부트스트랩 병렬 worker (default = nproc)
-#   FILTER          (extract/CI 단계 substring 필터)
-#   SKIP_EXTRACT=1  (이미 추출 끝났을 때)
-#   FORCE=1         (preds.npy/bootstrap.json 덮어쓰기)
+#   WORKERS         CPU bootstrap parallel worker (default = nproc)
+#   FILTER          (extract/CI stage substring filter)
+#   SKIP_EXTRACT=1  (already extract  )
+#   FORCE=1         (preds.npy/bootstrap.json )
 # =============================================================
 
 set -e
 
-RESULT_DIR=${1:-/home/irteam/ddn-opendata1/tykim/benchmark/results/20260428_203028}
+RESULT_DIR=${1:-/path/to/results/<timestamp>}
 GPUS=${2:-0}
 N_ITERS=${N_ITERS:-1000}
 WORKERS=${WORKERS:-$(nproc)}
@@ -35,8 +35,8 @@ FORCE=${FORCE:-0}
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 
-# CPC(S4/pykeops)가 요구하는 GLIBCXX 심볼 — preload (run_full_benchmark.sh와 동일)
-export LD_PRELOAD=/home/irteam/local-node-a/_conda/envs/tykim/lib/libstdc++.so.6
+# CPC(S4/pykeops)  do GLIBCXX  — preload (run_full_benchmark.sh and identical)
+export LD_PRELOAD=/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6
 export ECG_DATA_ROOT=${ECG_DATA_ROOT:-/home/irteam/ddn-opendata1}
 export ECG_CKPT_ROOT=${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}
 
@@ -54,7 +54,7 @@ echo "  SKIP_EXTRACT : $SKIP_EXTRACT"
 echo "  FORCE      : $FORCE"
 echo "============================================="
 
-# ── 1) 추론 추출 ──────────────────────────────────────────────
+# ── 1) inference extract ──────────────────────────────────────────────
 if [ "$SKIP_EXTRACT" != "1" ]; then
     echo ""
     echo "── [1/3] Extract test predictions ──"
@@ -63,11 +63,11 @@ if [ "$SKIP_EXTRACT" != "1" ]; then
     N_GPUS=${#GPU_LIST[@]}
 
     if [ "$N_GPUS" -le 1 ]; then
-        # Single-GPU: 한 번에 모든 폴더 처리
+        # Single-GPU:  in all directory handling
         CUDA_VISIBLE_DEVICES=$GPUS python scripts/extract_predictions.py \
             --root "$RESULT_DIR" $filter_arg $force_arg
     else
-        # Multi-GPU: 폴더 리스트를 GPU 수만큼 균등 분할 → 병렬 실행
+        # Multi-GPU: directory list GPU only etc. to → parallel run
         ALL_DIRS=$(ls -d "$RESULT_DIR"/*/ 2>/dev/null | sort)
         if [ -n "$FILTER" ]; then
             ALL_DIRS=$(echo "$ALL_DIRS" | grep "$FILTER" || true)
@@ -98,13 +98,13 @@ if [ "$SKIP_EXTRACT" != "1" ]; then
     fi
 fi
 
-# ── 2) Single-model 95% CI (CPU 병렬) ──────────────────────────
+# ── 2) Single-model 95% CI (CPU parallel) ──────────────────────────
 echo ""
 echo "── [2/3] Single-model bootstrap CI (n=$N_ITERS, workers=$WORKERS) ──"
 python scripts/bootstrap_ci.py --root "$RESULT_DIR" \
     --n_iters $N_ITERS --workers $WORKERS $filter_arg $force_arg
 
-# ── 3) Pairwise diff + tied-rank (CPU 병렬) ────────────────────
+# ── 3) Pairwise diff + tied-rank (CPU parallel) ────────────────────
 echo ""
 echo "── [3/4] Pairwise bootstrap + tied-rank (workers=$WORKERS) ──"
 python scripts/bootstrap_pairwise.py --root "$RESULT_DIR" \
@@ -117,7 +117,7 @@ python scripts/make_summary_table.py --root "$RESULT_DIR"
 
 echo ""
 echo "============================================="
-echo " 완료. 산출물:"
+echo " done. outputs:"
 echo "   - <result>/preds.npy, targets.npy, ids.npy, preds_meta.json"
 echo "   - <result>/bootstrap.json"
 echo "   - $RESULT_DIR/bootstrap_summary.csv"
@@ -125,7 +125,7 @@ echo "   - $RESULT_DIR/pairwise/pairwise_diff_<task>_<mode>.csv"
 echo "   - $RESULT_DIR/pairwise/tied_groups_<task>_<mode>.txt"
 echo "   - $RESULT_DIR/pairwise/pairwise_summary.csv"
 echo "   - $RESULT_DIR/pairwise/summary_<mode>.csv         ← raw scores (paper-style pivot)"
-echo "   - $RESULT_DIR/pairwise/summary_<mode>_marked.csv  ← bold/underline 마킹"
-echo "   - $RESULT_DIR/pairwise/summary_<mode>.md          ← markdown 표 (bold/underline 렌더링)"
-echo "   - $RESULT_DIR/pairwise/summary_ci_long.csv        ← 점추정 + 95% CI long-format"
+echo "   - $RESULT_DIR/pairwise/summary_<mode>_marked.csv  ← bold/underline "
+echo "   - $RESULT_DIR/pairwise/summary_<mode>.md          ← markdown table (bold/underline )"
+echo "   - $RESULT_DIR/pairwise/summary_ci_long.csv        ←  + 95% CI long-format"
 echo "============================================="

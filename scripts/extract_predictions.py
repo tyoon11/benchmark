@@ -1,22 +1,22 @@
 """
-Test-set predictions/targets 추출 (bootstrap 전처리)
+Test-set predictions/targets extract (bootstrap preprocessing)
 ====================================================
-한 (model, task, mode) result 폴더에 대해 best.pt를 로드하고
-test loader로 inference 한 뒤 preds.npy / targets.npy / ids.npy 를 저장합니다.
+ (model, task, mode) result directory in for best.pt loadand
+test loader by inference  preds.npy / targets.npy / ids.npy save.
 
-사용법:
+Usage:
   python scripts/extract_predictions.py --result_dir <RESULT_DIR>/<model>_<task>_<mode>
-  python scripts/extract_predictions.py --root <RESULT_DIR>           # 전체 폴더 자동 추출
-  python scripts/extract_predictions.py --root <RESULT_DIR> --filter cpc_chapman  # 부분 매칭
+  python scripts/extract_predictions.py --root <RESULT_DIR>           # all directory automatic extract
+  python scripts/extract_predictions.py --root <RESULT_DIR> --filter cpc_chapman  # prefix matching
 
-환경:
-  ECG_DATA_ROOT   기본 /home/irteam/ddn-opendata1
-  ECG_CKPT_ROOT   기본 /home/irteam/ddn-opendata1/model/ECGFMs
+:
+  ECG_DATA_ROOT   default ${ECG_DATA_ROOT}
+  ECG_CKPT_ROOT   default ${ECG_CKPT_ROOT}
 
-출력:
-  <result_dir>/preds.npy        (N, C) float32 — sigmoid 확률 (분류) / raw (회귀)
+output:
+  <result_dir>/preds.npy        (N, C) float32 — sigmoid  () / raw (time)
   <result_dir>/targets.npy      (N, C) float32
-  <result_dir>/ids.npy          (N,)   key — multi-window이면 ecg_id, 아니면 row index
+  <result_dir>/ids.npy          (N,)   key — multi-window if so, ecg_id,  then row index
 """
 
 import os
@@ -39,44 +39,48 @@ from src.dataset import H5ECGDataset
 from src.dataset_numpy import EchoNextDataset
 from src.wrapper import DownstreamWrapper
 
-# run.py 재사용
+# run.py re-use
 from run import load_config, load_encoder
 
 # ──────────────────────────────────────────────────────────────────
-# Model registry (configs/models.sh 의 bash assoc array를 mirror)
+# Model registry (configs/models.sh of bash assoc array mirror)
 # ──────────────────────────────────────────────────────────────────
-ECG_CKPT_ROOT = os.environ.get("ECG_CKPT_ROOT", "/home/irteam/ddn-opendata1/model/ECGFMs")
+ECG_CKPT_ROOT = os.environ.get("ECG_CKPT_ROOT", "/path/to/checkpoints")
+
+MORYECG_REPO = os.environ.get("MORYECG_REPO", str(Path(__file__).resolve().parents[2]))
 
 MODEL_CLS_MAP = {
-    "ecg_founder": "src.encoders.ecg_founder.ECGFounderEncoder",
-    "ecg_jepa":    "src.encoders.ecg_jepa.ECGJEPAEncoder",
-    "st_mem":      "src.encoders.st_mem.StMemEncoder",
-    "merl":        "src.encoders.merl.MerlResNetEncoder",
-    "ecgfm_ked":   "src.encoders.ecgfm_ked.EcgFmKEDEncoder",
-    "hubert_ecg":  "src.encoders.hubert_ecg.HuBERTECGEncoder",
-    "ecg_fm":      "src.encoders.ecg_fm.ECGFMEncoder",
-    "cpc":         "src.encoders.cpc.CPCEncoder",
+    "ecg_founder":    "src.encoders.ecg_founder.ECGFounderEncoder",
+    "ecg_jepa":       "src.encoders.ecg_jepa.ECGJEPAEncoder",
+    "st_mem":         "src.encoders.st_mem.StMemEncoder",
+    "merl":           "src.encoders.merl.MerlResNetEncoder",
+    "ecgfm_ked":      "src.encoders.ecgfm_ked.EcgFmKEDEncoder",
+    "hubert_ecg":     "src.encoders.hubert_ecg.HuBERTECGEncoder",
+    "ecg_fm":         "src.encoders.ecg_fm.ECGFMEncoder",
+    "cpc":            "src.encoders.cpc.CPCEncoder",
+    "moryecg_cb1024": "src.encoders.moryecg.MoRyECGEncoder",
 }
 MODEL_CKPT_MAP = {
-    "ecg_founder": f"{ECG_CKPT_ROOT}/ecg_founder/12_lead_ECGFounder.pth",
-    "ecg_jepa":    f"{ECG_CKPT_ROOT}/ecg_jepa/multiblock_epoch100.pth",
-    "st_mem":      f"{ECG_CKPT_ROOT}/st_mem/st_mem_vit_base_full.pth",
-    "merl":        f"{ECG_CKPT_ROOT}/merl/res18_best_encoder.pth",
-    "ecgfm_ked":   f"{ECG_CKPT_ROOT}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt",
-    "hubert_ecg":  f"{ECG_CKPT_ROOT}/hubert_ecg/hubert_ecg_base.safetensors",
-    "ecg_fm":      f"{ECG_CKPT_ROOT}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt",
-    "cpc":         f"{ECG_CKPT_ROOT}/cpc/last_11597276.ckpt",
+    "ecg_founder":    f"{ECG_CKPT_ROOT}/ecg_founder/12_lead_ECGFounder.pth",
+    "ecg_jepa":       f"{ECG_CKPT_ROOT}/ecg_jepa/multiblock_epoch100.pth",
+    "st_mem":         f"{ECG_CKPT_ROOT}/st_mem/st_mem_vit_base_full.pth",
+    "merl":           f"{ECG_CKPT_ROOT}/merl/res18_best_encoder.pth",
+    "ecgfm_ked":      f"{ECG_CKPT_ROOT}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt",
+    "hubert_ecg":     f"{ECG_CKPT_ROOT}/hubert_ecg/hubert_ecg_base.safetensors",
+    "ecg_fm":         f"{ECG_CKPT_ROOT}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt",
+    "cpc":            f"{ECG_CKPT_ROOT}/cpc/last_11597276.ckpt",
+    "moryecg_cb1024": f"{MORYECG_REPO}/checkpoints/pretrain_heedb_cb1024_v4/best.pt",
 }
 
 EVAL_MODES = ["attention_probe", "finetune_attention", "finetune_linear", "linear_probe"]
-# 정렬: 긴 모델명 우선 (ecgfm_ked가 ecg_*보다 먼저 매칭되도록 길이순)
+# sort:  model name  (ecgfm_ked ecg_* first, matching lengthorder)
 MODEL_NAMES_BY_LEN = sorted(MODEL_CLS_MAP.keys(), key=len, reverse=True)
 
 logger = logging.getLogger("extract_preds")
 
 
 # ──────────────────────────────────────────────────────────────────
-# 폴더명 파싱: <model>_<task>_<mode>  →  (model, task, mode)
+# directory name parsing: <model>_<task>_<mode>  →  (model, task, mode)
 # ──────────────────────────────────────────────────────────────────
 def parse_dirname(dirname: str):
     for mode in EVAL_MODES:
@@ -93,7 +97,7 @@ def parse_dirname(dirname: str):
 
 
 # ──────────────────────────────────────────────────────────────────
-# Test dataloader 빌드 (run.py 의 로직 mirror)
+# Test dataloader  (run.py of  mirror)
 # ──────────────────────────────────────────────────────────────────
 def build_test_loader(cfg):
     data_cfg = cfg.get("data", {})
@@ -102,7 +106,7 @@ def build_test_loader(cfg):
     fold_col = fold_cfg.get("col", "strat_fold")
     auto_split = fold_cfg.get("auto_split", True)
 
-    # auto_split: table CSV에서 strat_fold 자동 감지하여 test=max_fold
+    # auto_split: table CSV from strat_fold automatic  test=max_fold
     if auto_split:
         for path in (data_cfg.get("table_csv", ""), data_cfg.get("label_csv", "")):
             if path and os.path.exists(path):
@@ -116,9 +120,24 @@ def build_test_loader(cfg):
                     data_cfg["test_folds"] = [max_fold]
                     break
 
-    # regression z-norm (train fold mean/std)
+    # joint task: load cls_cols / reg_cols from schema JSON (mirrors run.py logic)
     task_type = task_cfg.get("task_type", "binary")
     data_cfg["task_type"] = task_type
+    if task_type == "classification_and_regression":
+        import json
+        schema_path = data_cfg.get("schema_json")
+        if not schema_path:
+            label_csv = data_cfg.get("label_csv", "")
+            schema_path = str(Path(label_csv).with_suffix(".json")) if label_csv else None
+        if schema_path and os.path.exists(schema_path):
+            with open(schema_path) as fh:
+                schema = json.load(fh)
+            if "cls_cols" not in data_cfg:
+                data_cfg["cls_cols"] = schema.get("cls_cols", [])
+            if "reg_cols" not in data_cfg:
+                data_cfg["reg_cols"] = schema.get("reg_cols", [])
+
+    # regression z-norm (train fold mean/std)
     if task_type == "regression" and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
         label_df = pd.read_csv(data_cfg["label_csv"], low_memory=False)
         train_rows = label_df[label_df[fold_col].isin(data_cfg["train_folds"])]
@@ -167,6 +186,8 @@ def build_test_loader(cfg):
             mean=data_cfg.get("mean"),
             std=data_cfg.get("std"),
             task_type=task_type,
+            cls_cols=data_cfg.get("cls_cols"),
+            reg_cols=data_cfg.get("reg_cols"),
             target_mean=data_cfg.get("target_mean"),
             target_std=data_cfg.get("target_std"),
         )
@@ -211,7 +232,7 @@ def run_inference(model, loader, device, task_type):
     all_targets = np.concatenate(all_targets, axis=0)
     all_ids = np.concatenate(all_ids, axis=0) if all_ids else None
 
-    # multi-window aggregation: ecg_id 별 평균 (paper §3.3)
+    # multi-window aggregation: ecg_id per  (paper §3.3)
     if all_ids is not None and len(all_ids) != len(np.unique(all_ids)):
         unique_ids = np.unique(all_ids)
         agg_preds = np.empty((len(unique_ids), all_preds.shape[1]), dtype=all_preds.dtype)
@@ -228,7 +249,7 @@ def run_inference(model, loader, device, task_type):
 
 
 # ──────────────────────────────────────────────────────────────────
-# 한 result_dir 처리
+# result_dir handling
 # ──────────────────────────────────────────────────────────────────
 def process_result_dir(result_dir: Path, device: str = None, force: bool = False):
     parsed = parse_dirname(result_dir.name)
@@ -260,7 +281,7 @@ def process_result_dir(result_dir: Path, device: str = None, force: bool = False
 
     encoder, feature_dim = load_encoder(encoder_cls, encoder_ckpt)
 
-    # multi-window 확장 (인코더가 chunk_seconds를 노출하면)
+    # multi-window extension (encoder chunk_seconds then)
     data_cfg = cfg.get("data", {})
     chunk_seconds = getattr(encoder, "chunk_seconds", None)
     if chunk_seconds is not None and data_cfg.get("target_fs"):
@@ -297,7 +318,7 @@ def process_result_dir(result_dir: Path, device: str = None, force: bool = False
     np.save(out_preds, preds.astype(np.float32))
     np.save(result_dir / "targets.npy", targets.astype(np.float32))
     np.save(result_dir / "ids.npy", ids)
-    # 메타 (bootstrap 단계에서 task_type/label_cols 필요)
+    # metadata (bootstrap stage from task_type/label_cols required)
     meta = {
         "model": model_name, "task": task, "mode": mode,
         "task_type": task_type,
@@ -314,11 +335,11 @@ def process_result_dir(result_dir: Path, device: str = None, force: bool = False
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--result_dir", type=str, default=None,
-                   help="단일 실험 폴더 (예: results/.../cpc_chapman_attention_probe)")
+                   help="single experiment directory (example: results/.../cpc_chapman_attention_probe)")
     p.add_argument("--root", type=str, default=None,
-                   help="전체 timestamp 폴더 (예: results/20260428_203028)")
+                   help="all timestamp directory (example: results/20260428_203028)")
     p.add_argument("--filter", type=str, default=None,
-                   help="root 내 폴더명 substring 필터")
+                   help="root  inside directory name substring filter")
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--force", action="store_true")
     args = p.parse_args()
@@ -331,7 +352,7 @@ def main():
         return
 
     if not args.root:
-        p.error("--result_dir 또는 --root 중 하나는 필요")
+        p.error("--result_dir or --root  of one required")
 
     root = Path(args.root)
     dirs = sorted(d for d in root.iterdir() if d.is_dir())

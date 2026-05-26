@@ -1,9 +1,9 @@
 """
-Downstream Head 모듈
+Downstream Head module
 =====================
-어떤 인코더 모델이든 공통으로 사용할 수 있는 Head 구현.
+ encoder model common as useto Head .
 
-지원 모드:
+support mode:
   - linear:     Frozen encoder + Linear head (Linear Probe)
   - attention:  Frozen encoder + Attention Pooling head
   - finetune:   Full finetuning + Linear head
