@@ -1,5 +1,5 @@
 # MIMIC-IV-ECG Sex (binary, M=1 / F=0)
-# 원본 paper Table: 182,076 samples × 1 output
+# original paper Table: 182,076 samples × 1 output
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0

@@ -1,6 +1,6 @@
 {
   "dataset": "mimic_biometrics",
-  "source": "omr.csv.gz (Height/Weight/BMI) + chartevents 보강 (Weight/Height), ECG-time 기준 closest 30일 매칭. mimic_preprocessing.py:115-117,280-306,378-386 재현.",
+  "source": "omr.csv.gz (Height/Weight/BMI) + chartevents enrich (Weight/Height), ECG-time reference: closest 30case matching. mimic_preprocessing.py:115-117,280-306,378-386 reproduction.",
   "task_type": "regression",
   "n_labels": 3,
   "labels": {

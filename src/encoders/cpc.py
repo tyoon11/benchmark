@@ -4,11 +4,11 @@ CPC Encoder Adapter
 Model sampling frequency: 240 Hz
 Embedding dimension: 512
 
-Hydra/Lightning 의존성 없이 체크포인트에서 직접 encoder + predictor를 로드합니다.
-구조:
-  - Encoder: 4층 Conv1d (12→512, stride=[2,1,1,1], ks=[3,1,1,1]) + BatchNorm + ReLU
-  - Predictor: 4층 S4 (state-space model, dim=512)
-임베딩에는 encoder + predictor 전체 출력을 사용합니다.
+Hydra/Lightning dependency without checkpointis from directly encoder + predictor load.
+layout:
+  - Encoder: 4 Conv1d (12→512, stride=[2,1,1,1], ks=[3,1,1,1]) + BatchNorm + ReLU
+  - Predictor: 4 S4 (state-space model, dim=512)
+embedding in encoder + predictor all output use.
 """
 
 import os
@@ -23,9 +23,9 @@ from pathlib import Path
 
 # ──────────────────────────────────────────────────────────────────────
 # Stub-class unpickler for CPC Lightning checkpoint.
-# CPC ckpt 의 hyper_parameters 가 clinical_ts.template_modules 등 (우리가
-# bundle하지 않은 paper 내부 클래스) 를 참조해서 torch.load 시 ModuleNotFoundError.
-# state_dict 만 필요하니까 missing 클래스는 빈 stub으로 대체해 unpickle 통과시킴.
+# CPC ckpt of hyper_parameters clinical_ts.template_modules etc. (
+# bundledo not  paper  class) see to  torch.load at ModuleNotFoundError.
+# state_dict  only required missing class  stub as  unpickle .
 # ──────────────────────────────────────────────────────────────────────
 class _StubUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
@@ -121,7 +121,7 @@ _configure_s4_runtime()
 
 
 def _build_conv_block(in_ch, out_ch, kernel_size=3, stride=1):
-    """Conv1d + BatchNorm + ReLU (CPC encoder 기본 블록)"""
+    """Conv1d + BatchNorm + ReLU (CPC encoder default )"""
     return nn.Sequential(
         nn.Conv1d(in_ch, out_ch, kernel_size=kernel_size, stride=stride,
                   padding=(kernel_size - 1) // 2, bias=False),
@@ -134,8 +134,8 @@ class CPCEncoder(nn.Module):
     """
     CPC encoder wrapper (Hydra-free).
 
-    체크포인트에서 encoder (Conv1d) 와 predictor (S4) weights를 직접 로드합니다.
-    S4 predictor 로드에 실패하면 encoder-only로 fallback합니다.
+    checkpointis from encoder (Conv1d) and predictor (S4) weights directly load.
+    S4 predictor load in failurethen encoder-only by fallback.
 
     forward(x) → (sequence_features, pooled_features)
       - x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
@@ -161,15 +161,15 @@ class CPCEncoder(nn.Module):
             _build_conv_block(512, 512, kernel_size=1, stride=1),  # layer 3
         )
 
-        # ── Predictor: S4 (paper의 S4Predictor wrapper와 동일 설정) ──
-        # 중요: d_input=None! 그래야 self.encoder=nn.Identity()가 되어 paper의
-        # S4Predictor(채널==model_dim → d_input=None) 와 정확히 일치.
-        # d_input=512 로 하면 랜덤 초기화된 Conv1d(512→512, k=1) 가 추가되어
-        # checkpoint에 없는 가중치로 feature가 corrupt 됨. (실측 CPC AUROC 0.78
-        # vs paper 0.88 — 이 한 줄 때문)
-        # 또한 encoder 출력을 (B,T,D) 로 transpose 후 넘기므로 transposed_input=False
-        # — paper의 RNNEncoder 가 이미 (B,T,D) 로 변환해서 S4Predictor 에 넘기는
-        # 흐름을 그대로 재현.
+        # ── Predictor: S4 (paper's S4Predictor wrapper and identical config) ──
+        #  of: d_input=None!  self.encoder=nn.Identity()  paper's
+        # S4Predictor(channel==model_dim → d_input=None) and  match.
+        # d_input=512 by then  inited Conv1d(512→512, k=1) add
+        # checkpoint in no  of feature corrupt  . ( CPC AUROC 0.78
+        # vs paper 0.88 —  line )
+        # Also, encoder output (B,T,D) by transpose after  transposed_input=False
+        # — paper's RNNEncoder already (B,T,D) by convert to  S4Predictor in 
+        #  as-is reproduction.
         try:
             from clinical_ts.ts.s4_modules.s4_model import S4Model
             self.predictor = S4Model(
@@ -181,8 +181,8 @@ class CPCEncoder(nn.Module):
                 dropout=0.2,
                 tie_dropout=True,
                 prenorm=False,
-                l_max=1200,             # checkpoint omega shape (601,2) 기준
-                transposed_input=False, # ← paper와 동일; we'll feed (B,T,D)
+                l_max=1200,             # checkpoint omega shape (601,2) reference
+                transposed_input=False, # ← paper and identical; we'll feed (B,T,D)
                 bidirectional=False,    # causal=True
                 layer_norm=True,        # batchnorm=False
                 pooling=False,
@@ -191,7 +191,7 @@ class CPCEncoder(nn.Module):
             self._has_predictor = True
             print("[CPCEncoder] S4 predictor loaded")
         except Exception as e:
-            print(f"[CPCEncoder] S4 predictor 사용 불가 (encoder-only fallback): {e}")
+            print(f"[CPCEncoder] S4 predictor use (encoder-only fallback): {e}")
             self.predictor = None
 
         if checkpoint:
@@ -246,11 +246,11 @@ class CPCEncoder(nn.Module):
     def forward(self, x):
         """x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
 
-        Paper의 forward 흐름과 동일하게 맞춤:
+        Paper's forward  and identically :
           encoder (B,12,T) → (B,512,T')
-          → transpose to (B,T',512)  (paper RNNEncoder가 마지막에 transpose하는 것 동일)
+          → transpose to (B,T',512)  (paper RNNEncoder  in transpose do  identical)
           → S4Predictor wrapper (transposed_input=False)
-          → S4Model: 입력 (B,T',512) → 출력 (B,T',512)
+          → S4Model: input (B,T',512) → output (B,T',512)
           → pooling (B, 512)
         """
         x = torch.nan_to_num(x)
@@ -259,7 +259,7 @@ class CPCEncoder(nn.Module):
 
         # Encoder: (B, 12, 600) → (B, 512, T')
         enc_out = self.encoder(x)
-        # Paper의 RNNEncoder가 마지막에 transpose해서 (B, T', 512) 반환 → S4Predictor 입력.
+        # Paper's RNNEncoder  in transpose to  (B, T', 512) return → S4Predictor input.
         seq = enc_out.transpose(1, 2)  # (B, T', 512)
 
         if self._has_predictor and self.predictor is not None:
@@ -268,7 +268,7 @@ class CPCEncoder(nn.Module):
             except Exception as e:
                 if not getattr(CPCEncoder, "_s4_warned", False):
                     import traceback
-                    print(f"[CPCEncoder] S4 forward 실패 → encoder-only fallback: {type(e).__name__}: {e}")
+                    print(f"[CPCEncoder] S4 forward failure → encoder-only fallback: {type(e).__name__}: {e}")
                     traceback.print_exc()
                     CPCEncoder._s4_warned = True
                 self._has_predictor = False

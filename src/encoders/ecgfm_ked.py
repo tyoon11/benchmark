@@ -95,7 +95,7 @@ class EcgFmKEDEncoder(nn.Module):
         if x.shape[-1] != self.model_seq_len:
             x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
 
-        # nn.Sequential forward — DataParallel safe (모델이 같은 device에 있음)
+        # nn.Sequential forward — DataParallel safe (model same device in )
         seq = nn.Sequential.forward(self.model, x)  # (B, 768, T')
         seq = rearrange(seq, "b c l -> b l c")
         pooled = torch.mean(seq, dim=1)

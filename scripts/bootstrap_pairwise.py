@@ -1,24 +1,24 @@
 """
-Pairwise empirical bootstrap (n=1000) — 모델 간 유의차 / tied-rank
+Pairwise empirical bootstrap (n=1000) — model   / tied-rank
 ====================================================================
-같은 (task, mode) 안의 두 모델 A, B에 대해
+same (task, mode)  of  model A, B in for
   diff_b = score(A | resample_b) - score(B | resample_b)        (paired bootstrap)
   CI_95 = [point + pct(diffs-diff_pt, 2.5), point + pct(diffs-diff_pt, 97.5)]
-  유의차 = 0 ∉ CI_95
-  유의차가 없으면 동순위 (tied).
+   = 0 ∉ CI_95
+   if absent, orderabove (tied).
 
-각 (task, mode)에 대해
+ (task, mode) for
   - pairwise_diff_<task>_<mode>.csv : (model_a, model_b, diff, ci_low, ci_high, sig)
-  - tied_groups_<task>_<mode>.txt   : best_metric 기준 모델 순위 + 동순위 그룹
+  - tied_groups_<task>_<mode>.txt   : best_metric reference: model orderabove + orderabove group
 
-전체 요약: pairwise_summary.csv  (모든 task·mode 합본)
+all summary: pairwise_summary.csv  (all task·mode )
 
-사용법:
+Usage:
   python scripts/bootstrap_pairwise.py --root <RESULT_ROOT> [--n_iters 1000]
 
-전제:
-  - 같은 (task, mode) 의 모델들은 동일한 test split을 쓰므로 N과 정렬이 같다고 가정.
-  - ids.npy 가 있으면 정렬 키로 사용해 정합성 보장 (주로 multi-window 케이스).
+before:
+  - same (task, mode) of model identical test split  N and sort  .
+  - ids.npy if present, sort key by use   ( multi-window ).
 """
 
 import os
@@ -43,7 +43,7 @@ logger = logging.getLogger("bootstrap_pairwise")
 
 
 # ──────────────────────────────────────────────────────────────────
-# 한 (task, mode) 그룹 처리
+# (task, mode) group handling
 # ──────────────────────────────────────────────────────────────────
 def load_group(dirs):
     """returns: list of dict(model, preds, targets, ids, task_type)"""
@@ -63,7 +63,7 @@ def load_group(dirs):
 
 
 def align_by_ids(group):
-    """ids.npy 기준으로 모든 모델을 같은 순서로 정렬. 공통 id만 유지."""
+    """ids.npy reference as all model same order by sort. common id only keep."""
     common = None
     for g in group:
         s = set(g["ids"].tolist())
@@ -81,12 +81,12 @@ def align_by_ids(group):
 
 
 def pairwise_bootstrap(group, n_iters=1000, seed=0, alpha=0.95):
-    """공유 부트스트랩 인덱스로 paired difference CI."""
+    """shared bootstrap isdex paired difference CI."""
     task_type = group[0]["task_type"]
     score_fn, metric_name = get_metric_fn(task_type)
     higher_is_better = (task_type != "regression")
 
-    # 공유된 targets — 모든 모델이 동일해야 함 (sanity check)
+    # shareded targets — all model identical (sanity check)
     targets = group[0]["targets"]
     for g in group[1:]:
         if not np.allclose(np.nan_to_num(g["targets"]), np.nan_to_num(targets)):
@@ -96,7 +96,7 @@ def pairwise_bootstrap(group, n_iters=1000, seed=0, alpha=0.95):
     rng = np.random.default_rng(seed)
     boot_idx = rng.integers(0, n, size=(n_iters, n))
 
-    # 모델별 부트스트랩 score 행렬: (n_iters,)
+    # model per bootstrap score rows: (n_iters,)
     point_scores = {}
     boot_scores = {}
     for g in group:
@@ -134,10 +134,10 @@ def pairwise_bootstrap(group, n_iters=1000, seed=0, alpha=0.95):
 
 def tied_rank_groups(point_scores, pair_rows, higher_is_better):
     """
-    유의차 없는 모델끼리 같은 순위 그룹으로 묶기.
+     no model same orderabove group as .
 
     Equivalence classes: A ~ B if pair (A,B) is NOT significant.
-    실제로는 transitive 가 보장 안 되지만 (paper와 동일하게) 단순 union-find로 처리.
+    in practice transitive  inside  only (paper and identically) justorder union-find by handling.
     """
     models = sorted(point_scores.keys(),
                     key=lambda m: -point_scores[m] if higher_is_better else point_scores[m])
@@ -161,7 +161,7 @@ def tied_rank_groups(point_scores, pair_rows, higher_is_better):
     for m in models:
         groups[find(m)].append(m)
 
-    # 그룹 순서: 그룹 best score 순
+    # group order: group best score order
     def grp_key(grp):
         s = max(point_scores[m] for m in grp) if higher_is_better else min(point_scores[m] for m in grp)
         return -s if higher_is_better else s
@@ -174,7 +174,7 @@ def tied_rank_groups(point_scores, pair_rows, higher_is_better):
 
 
 # ──────────────────────────────────────────────────────────────────
-# 메인
+# main
 # ──────────────────────────────────────────────────────────────────
 def _process_group(payload):
     """One (task, mode) group → (rows_for_summary, pair_rows, tied_groups, point_scores, metric_name, hib).
@@ -235,7 +235,7 @@ def main():
     p.add_argument("--alpha", type=float, default=0.95)
     p.add_argument("--out_subdir", type=str, default="pairwise")
     p.add_argument("--workers", type=int, default=1,
-                   help="(task, mode) 그룹 병렬 worker 수. 그룹 ≈ 50–68개 → 코어수까지 권장.")
+                   help="(task, mode) group parallel worker. group ≈ 50–68 →  .")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -245,7 +245,7 @@ def main():
     out_dir = root / args.out_subdir
     out_dir.mkdir(exist_ok=True)
 
-    # parse_dirname: extract_predictions 의 함수 재사용
+    # parse_dirname: extract_predictions of function re-use
     from scripts.extract_predictions import parse_dirname
 
     # group by (task, mode)

@@ -1,32 +1,35 @@
-# =============================================================
-# ECG Downstream Benchmark — Python dependencies
-# =============================================================
+# ===========================================================================
+# ECG Downstream Benchmark — pip dependencies
+# ===========================================================================
 #   pip install -r requirements.txt
 #
-# clinical_ts subset이 src/external/ 안에 bundled 되어있어 외부 repo
-# 다운로드 불필요. 이 파일의 pip 패키지만 있으면 8개 인코더 import 가능.
-# =============================================================
+# The `clinical_ts` subset is bundled in `src/external/`, so no external repo
+# clone is needed. The packages below are sufficient to import the 8 reference
+# encoder adapters and run the benchmark.
+# ===========================================================================
 
-# ─── 핵심 ML/data ───
+# ── Core ML / data ──────────────────────────────────────────────────────────
 torch>=2.0
-numpy
-pandas
-scipy
-scikit-learn
-h5py
-pyyaml
-tqdm
+numpy>=1.24
+pandas>=2.0
+scipy>=1.11
+scikit-learn>=1.3
+h5py>=3.9
+pyyaml>=6.0
+tqdm>=4.66
 
-# ─── bundled clinical_ts 의 transitive 의존성 ───
-einops                  # ST-MEM, S4 modules의 rearrange/repeat
-timm                    # ECG-JEPA의 DropPath
-opt-einsum              # CPC S4 module의 contraction
-pytorch-lightning       # CPC S4Model이 LightningModule 상속
-omegaconf               # CPC checkpoint pickle이 OmegaConf 타입 포함
-hydra-core              # CPC load_model_from_config (선택)
-fastcore                # ECGFM-KED의 fastcore.foundation 사용
-fastai                  # ECGFM-KED의 fastai.layers / fastai.core
-ipython                 # fastprogress(fastai 의존)가 IPython.display를 직접 import
-safetensors             # HuBERT-ECG checkpoint 포맷
-transformers            # HuBERT-ECG의 HuBERT backbone
-biosppy                 # HuBERT-ECG preprocessing의 bandpass filter
+# ── Transitive dependencies of the bundled clinical_ts subset ───────────────
+einops>=0.7              # ST-MEM, S4 modules (rearrange / repeat)
+timm>=0.9                # ECG-JEPA, MERL ViT (DropPath)
+opt-einsum>=3.3          # CPC S4 module contraction
+pytorch-lightning>=2.0   # CPC S4Model subclasses LightningModule
+omegaconf>=2.3           # CPC checkpoint pickle contains OmegaConf types
+fastcore>=1.5            # ECGFM-KED uses fastcore.foundation
+fastai>=2.7              # ECGFM-KED uses fastai.layers / fastai.core
+ipython>=8.0             # fastprogress (fastai dep) imports IPython.display directly
+safetensors>=0.4         # HuBERT-ECG checkpoint format
+transformers>=4.30       # HuBERT-ECG backbone
+biosppy>=2.1             # HuBERT-ECG preprocessing bandpass filter
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+# hydra-core>=1.3        # only used if you build configs via Hydra

@@ -1,5 +1,5 @@
-# CODE-15% Diagnosis — ECG-JEPA용
-# CODE-15 원본: 400Hz, 4096 samples → 500Hz로 upsample(5120) → 앞 2500 crop
+# CODE-15% Diagnosis — ECG-JEPA (for)
+# CODE-15 original: 400Hz, 4096 samples → 500Hz upsample to(5120) → first 2500 crop
 task:
   name: code15_diag
   num_classes: 6
@@ -16,7 +16,7 @@ data:
     - is_STach
     - is_AF
   target_fs: 500       # 400→500 upsample
-  target_length: 2500  # 500Hz × 5초
+  target_length: 2500  # 500Hz × 5s
   normalize: false
   batch_size: 128
   num_workers: 8

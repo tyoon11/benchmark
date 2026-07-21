@@ -25,10 +25,10 @@ class StMemEncoder(nn.Module):
       - x: (B, 12, T) at data target_fs — resampled to 600 samples (2.4s @ 250Hz)
       - pooled_features: (B, 768)
 
-    Note: 사전 학습 체크포인트는 pos_embedding이 seq_len=2250 (30 patch + 2 SEP)
-          으로 만들어져 있지만, paper처럼 600 샘플만 forward하면
-          `pos_embedding[:, 1:n+1]` 슬라이싱으로 첫 8 patch만 사용됨 — zero pad
-          불필요.
+    Note: before training checkpointis pos_embedding seq_len=2250 (30 patch + 2 SEP)
+           as  only  only, paperlike 600 samples only forwardthen
+          `pos_embedding[:, 1:n+1]`  as first 8 patch only use  — zero pad
+          required.
     """
 
     # Paper: input_size=2.4s, fs_model=250 → 600 samples per window.

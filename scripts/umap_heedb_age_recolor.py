@@ -1,7 +1,7 @@
 """
-기존 heedb_umap_*_n*.npz의 coords를 재사용해서 age 기준 재채색.
+existing heedb_umap_*_n*.npz's coords re-use to  age reference: re-.
 
-같은 seed/n_per_class로 재샘플링 → row 순서 일치 → age만 merge하여 시각화.
+same seed/n_per_class by re-sampling → row order match → age only merge visualize.
 """
 
 import argparse
@@ -11,11 +11,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-HEEDB_ROOT = Path("/home/irteam/ddn-opendata1/h5/heedb/v4.0")
+HEEDB_ROOT = Path("/path/to/ecg_data/h5/heedb/v4.0")
 TABLE_CSV = HEEDB_ROOT / "heedb_table.csv"
 LABEL_CSV = HEEDB_ROOT / "heedb_labels.csv"
 
-AGE_SCALE = 100.0  # 0.64 → 64세
+AGE_SCALE = 100.0  # 0.64 → 64
 
 ENCODER_TITLE = {
     "founder": "ECG-Founder",
@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--npz", type=str, required=True)
     parser.add_argument("--encoder_name", type=str, default=None,
-                        help="title에 쓸 모델명. 미지정 시 npz 파일명에서 추론")
+                        help="title in  model name. unset at npz file name from inference")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
@@ -60,7 +60,7 @@ def main():
     )
 
     npz_path = Path(args.npz)
-    # 파일명에서 encoder 추론 (heedb_umap_<enc>_n<N>.npz)
+    # file name from encoder inference (heedb_umap_<enc>_n<N>.npz)
     stem = npz_path.stem  # heedb_umap_cpc_n10000
     enc_key = None
     for k in ENCODER_TITLE:
@@ -77,14 +77,14 @@ def main():
     if args.output is None:
         args.output = str(npz_path.with_name(npz_path.stem + "_age.png"))
 
-    # 1) npz 로드
+    # 1) npz load
     logging.info(f"load {npz_path}")
     data = np.load(npz_path)
     coords = data["coords"]
     labels = data["labels"]
     logging.info(f"  coords={coords.shape}, labels={labels.shape}")
 
-    # 2) 동일 seed로 rows 재생성 → age 취득
+    # 2) identical seed by rows re-generate → age 
     rows = rebuild_rows(args.n_per_class, seed=args.seed)
     logging.info(f"  rebuilt rows: {len(rows)}")
 
@@ -109,7 +109,7 @@ def main():
 
     fig, axes = plt.subplots(1, 2, figsize=(18, 8))
 
-    # 좌: 연속 컬러
+    # :  
     ax = axes[0]
     ax.scatter(coords[~has_age, 0], coords[~has_age, 1],
                c="lightgray", s=4, alpha=0.3, label="age N/A")
@@ -130,7 +130,7 @@ def main():
     ax.legend(loc="upper right", fontsize=9, markerscale=2)
     ax.grid(alpha=0.2)
 
-    # 우: 5 bin
+    # : 5 bin
     ax = axes[1]
     bin_edges = [0, 20, 40, 60, 80, 120]
     bin_labels = ["<20", "20-40", "40-60", "60-80", "80+"]

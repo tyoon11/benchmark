@@ -1,11 +1,11 @@
 #!/bin/bash
 # =============================================================
-# 한 모델의 남은 태스크들을 여러 GPU로 병렬 실행
+# model's  tasks  GPU by parallel run
 #
-# 사용법:
+# Usage:
 #   bash run_parallel_tasks.sh <model> <eval_mode> <timestamp> <gpus> <tasks...>
 #
-# 예시:
+# Examples:
 #   bash run_parallel_tasks.sh hubert_ecg finetune_attention 20260414_140124 \
 #        "0 1 3 4 5" \
 #        ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub zzu_pecg
@@ -26,7 +26,7 @@ cd "$SCRIPT_DIR"
 GPUS=($GPUS_STR)
 RESULT_DIR="results/$TIMESTAMP"
 
-# 모델별 클래스 + 체크포인트 매핑
+# model per class + checkpointis mapping
 declare -A MODEL_CLS
 declare -A MODEL_CKPT
 
@@ -39,14 +39,14 @@ MODEL_CLS[hubert_ecg]="src.encoders.hubert_ecg.HuBERTECGEncoder"
 MODEL_CLS[ecg_fm]="src.encoders.ecg_fm.ECGFMEncoder"
 MODEL_CLS[cpc]="src.encoders.cpc.CPCEncoder"
 
-MODEL_CKPT[ecg_founder]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_founder/12_lead_ECGFounder.pth"
-MODEL_CKPT[ecg_jepa]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_jepa/multiblock_epoch100.pth"
-MODEL_CKPT[st_mem]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/st_mem/st_mem_vit_base_full.pth"
-MODEL_CKPT[merl]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/merl/res18_best_encoder.pth"
-MODEL_CKPT[ecgfm_ked]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
-MODEL_CKPT[hubert_ecg]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/hubert_ecg/hubert_ecg_base.safetensors"
-MODEL_CKPT[ecg_fm]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
-MODEL_CKPT[cpc]="${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}/cpc/last_11597276.ckpt"
+MODEL_CKPT[ecg_founder]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/ecg_founder/12_lead_ECGFounder.pth"
+MODEL_CKPT[ecg_jepa]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/ecg_jepa/multiblock_epoch100.pth"
+MODEL_CKPT[st_mem]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/st_mem/st_mem_vit_base_full.pth"
+MODEL_CKPT[merl]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/merl/res18_best_encoder.pth"
+MODEL_CKPT[ecgfm_ked]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/ecgfm_ked/best_valid_all_increase_with_augment_epoch_3.pt"
+MODEL_CKPT[hubert_ecg]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/hubert_ecg/hubert_ecg_base.safetensors"
+MODEL_CKPT[ecg_fm]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt"
+MODEL_CKPT[cpc]="${ECG_CKPT_ROOT:-${ECG_CKPT_ROOT}}/cpc/last_11597276.ckpt"
 
 # epochs / lr
 if [[ "$EVAL_MODE" == finetune_* ]]; then
@@ -61,7 +61,7 @@ ENCODER_CLS="${MODEL_CLS[$MODEL]}"
 ENCODER_CKPT="${MODEL_CKPT[$MODEL]}"
 
 if [ -z "$ENCODER_CLS" ]; then
-    echo "[ERROR] 알 수 없는 모델: $MODEL"
+    echo "[ERROR]  no model: $MODEL"
     exit 1
 fi
 
@@ -73,15 +73,15 @@ echo " GPUs:       ${GPUS[*]}"
 echo " Tasks:      ${TASKS[*]}"
 echo "============================================="
 
-# GPU 수와 태스크 수 비교
+# GPU  and task 
 N_TASKS=${#TASKS[@]}
 N_GPUS=${#GPUS[@]}
 
 if [ $N_TASKS -gt $N_GPUS ]; then
-    echo "[WARNING] 태스크 수($N_TASKS) > GPU 수($N_GPUS) — 일부 GPU에 여러 태스크 순차 실행"
+    echo "[WARNING] task ($N_TASKS) > GPU ($N_GPUS) — some GPU in  task sequential run"
 fi
 
-# 각 GPU에 태스크 분배 (라운드 로빈)
+# each GPU in task  ( )
 PIDS=()
 for i in "${!TASKS[@]}"; do
     task="${TASKS[$i]}"
@@ -90,9 +90,9 @@ for i in "${!TASKS[@]}"; do
     save_dir="$RESULT_DIR/${MODEL}_${task}_${EVAL_MODE}"
     log="$RESULT_DIR/parallel_${MODEL}_${task}_${EVAL_MODE}.log"
 
-    # 이미 완료된 태스크 skip
+    # already doneed task skip
     if [ -f "$save_dir/test_metrics.txt" ]; then
-        echo "  [SKIP] $task (이미 완료)"
+        echo "  [SKIP] $task (already done)"
         continue
     fi
 
@@ -109,11 +109,11 @@ for i in "${!TASKS[@]}"; do
 done
 
 echo ""
-echo "${#PIDS[@]}개 태스크 백그라운드 시작 (PIDS: ${PIDS[*]})"
+echo "${#PIDS[@]} task  start (PIDS: ${PIDS[*]})"
 echo ""
-echo "모니터링:"
+echo ":"
 echo "  tail -f $RESULT_DIR/parallel_${MODEL}_*.log"
 echo ""
-echo "GPU 사용:"
+echo "GPU use:"
 sleep 3
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits

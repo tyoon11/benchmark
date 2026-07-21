@@ -1,7 +1,7 @@
 """
 ECG-FM Encoder Adapter
 =======================
-Wav2Vec2 스타일 ECG encoder. fairseq_signals 의존성 없이 직접 구현.
+Wav2Vec2 style ECG encoder. fairseq_signals dependency without directly .
 feature_extractor (4 conv layers) + transformer encoder (12 layers)
 
 Model: 12-lead, embed_dim=768, 12 layers, 12 heads
@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 
 class ConvFeatureExtractor(nn.Module):
-    """Wav2Vec2 스타일 CNN feature extractor"""
+    """Wav2Vec2 style CNN feature extractor"""
     def __init__(self, in_channels=12, conv_layers=None):
         super().__init__()
         if conv_layers is None:
@@ -41,7 +41,7 @@ class ConvFeatureExtractor(nn.Module):
 
 
 class ConvPositionalEncoding(nn.Module):
-    """Wav2Vec2 스타일 convolutional positional encoding (weight_norm 호환)"""
+    """Wav2Vec2 style convolutional positional encoding (weight_norm compatibility)"""
     def __init__(self, embed_dim=768, kernel_size=128, groups=16):
         super().__init__()
         conv = nn.Conv1d(embed_dim, embed_dim, kernel_size,
@@ -61,7 +61,7 @@ class ConvPositionalEncoding(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    """Separate q/k/v projections (fairseq 호환)"""
+    """Separate q/k/v projections (fairseq compatibility)"""
     def __init__(self, embed_dim, num_heads, dropout=0.0):
         super().__init__()
         self.num_heads = num_heads
@@ -196,7 +196,7 @@ class ECGFMEncoder(nn.Module):
         else:
             state = ckpt
 
-        # fairseq 키 → 우리 모델 키 매핑
+        # fairseq key →  model key mapping
         new_state = {}
         skip_prefixes = ("mask_emb", "quantizer.", "project_q.", "final_proj.")
         for k, v in state.items():

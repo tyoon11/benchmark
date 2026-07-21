@@ -1,5 +1,5 @@
-# PTB-XL — ECG-JEPA용 (500Hz, 2500 samples = 5초)
-# PTB-XL 내에서 양성 충분한 라벨 10개 선정 (양성 ≥ 500)
+# PTB-XL — ECG-JEPA (for) (500Hz, 2500 samples = 5s)
+# PTB-XL from positive  label 10  (positive ≥ 500)
 task:
   name: ptbxl_super
   num_classes: 10
@@ -20,7 +20,7 @@ data:
     - is_SB        #    636 ( 2.9%) Sinus Bradycardia
     - is_LBBB      #    536 ( 2.5%) Left Bundle Branch Block
   target_fs: 500
-  target_length: 2500  # 500Hz × 5초
+  target_length: 2500  # 500Hz × 5s
   normalize: false
   batch_size: 64
   num_workers: 8

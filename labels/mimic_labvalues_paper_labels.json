@@ -1,6 +1,6 @@
 {
   "dataset": "mimic_labvalues",
-  "source": "labevents.csv.gz + d_labitems.csv.gz (18 lab labels) + chartevents 보강 (Creatinine/Hemoglobin/Hematocrit/Bilirubin/Albumin), ECG-time 기준 closest 1시간 매칭. mimic_preprocessing.py:124-154,344-372,398-407 재현.",
+  "source": "labevents.csv.gz + d_labitems.csv.gz (18 lab labels) + chartevents enrich (Creatinine/Hemoglobin/Hematocrit/Bilirubin/Albumin), ECG-time (closest within ±1 h). mimic_preprocessing.py:124-154,344-372,398-407 reproduction.",
   "task_type": "regression",
   "n_labels": 18,
   "labels": {

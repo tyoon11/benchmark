@@ -1,5 +1,5 @@
 # sph_diag — SPH (Liu 2022) 35-class multi-label AHA primary diagnosis (min_cnt=10)
-# ecg-fm-benchmarking의 prepare_data_sph(min_cnt=10) 35 라벨을 동일 재현.
+# ecg-fm-benchmarking's prepare_data_sph(min_cnt=10) 35 label identical reproduction.
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/sph/v2.0

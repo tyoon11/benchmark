@@ -1,33 +1,33 @@
 #!/bin/bash
 # =============================================================
-# ECG Downstream Benchmark 일괄 실행
+# ECG Downstream Benchmark batch run
 #
-# 사용법:
-#   bash run_benchmark.sh                          # 전체 (linear_probe, GPU 0)
+# Usage:
+#   bash run_benchmark.sh                          # all (linear_probe, GPU 0)
 #   bash run_benchmark.sh linear_probe 0           # linear_probe, GPU 0
 #   bash run_benchmark.sh finetune_attention 0,1    # finetune + attention, GPU 0,1 (DDP)
-#   bash run_benchmark.sh all 0,1,2,3              # 4가지 모드 전부
+#   bash run_benchmark.sh all 0,1,2,3              # 4 mode all
 # =============================================================
 
 set -e
 
 # ─────────────────────────────────────────────────────────────
-# 설정
+# config
 # ─────────────────────────────────────────────────────────────
 ENCODER_CLS="src.encoders.ecg_jepa.ECGJEPAEncoder"
-ENCODER_CKPT="/home/irteam/local-node-d/tykim/ecg_jepa/weights/ecg_jepa_heedb_20260402_095909/best.pth"
+ENCODER_CKPT="${WORKSPACE_ROOT}/ecg_jepa/weights/ecg_jepa_heedb_20260402_095909/best.pth"
 EPOCHS=50
 FINETUNE_EPOCHS=30
 FINETUNE_LR="5e-4"
 
 EVAL_MODE=${1:-linear_probe}   # linear_probe | attention_probe | finetune_linear | finetune_attention | all
-GPUS=${2:-0}                   # GPU IDs (쉼표 구분, 예: 0,1,2,3)
+GPUS=${2:-0}                   # GPU IDs (comma-separated, example: 0,1,2,3)
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 mkdir -p results
 
-# 태스크 목록 (논문 벤치마크 17개 — run_full_benchmark.sh와 동일)
+# task list (paper benchmark 17 — run_full_benchmark.sh and identical)
 TASKS=(
     # Adult ECG interpretation
     ptb
@@ -52,7 +52,7 @@ TASKS=(
 )
 
 # ─────────────────────────────────────────────────────────────
-# 유틸
+# utilities
 # ─────────────────────────────────────────────────────────────
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -95,13 +95,13 @@ run_task() {
             > "$log_file" 2>&1
     fi
 
-    # 결과 요약
+    # results summary
     local auroc=$(grep "Best val AUROC" "$log_file" 2>/dev/null | grep -oP '[\d.]+' | head -1)
     log "[$task] $mode → AUROC=${auroc:-N/A}"
 }
 
 # ─────────────────────────────────────────────────────────────
-# 실행
+# run
 # ─────────────────────────────────────────────────────────────
 if [ "$EVAL_MODE" = "all" ]; then
     MODES=(linear_probe attention_probe finetune_linear finetune_attention)
@@ -113,7 +113,7 @@ log "======================================"
 log "ECG Downstream Benchmark"
 log "  Encoder: $ENCODER_CLS"
 log "  Checkpoint: $ENCODER_CKPT"
-log "  Tasks: ${#TASKS[@]}개"
+log "  Tasks: ${#TASKS[@]}"
 log "  Modes: ${MODES[*]}"
 log "  GPUs: $GPUS"
 log "======================================"
@@ -127,11 +127,11 @@ for mode in "${MODES[@]}"; do
 done
 
 # ─────────────────────────────────────────────────────────────
-# 최종 요약
+# Final summary
 # ─────────────────────────────────────────────────────────────
 log ""
 log "======================================"
-log "최종 결과 요약"
+log "final results summary"
 log "======================================"
 printf "%-20s" "Task"
 for mode in "${MODES[@]}"; do
@@ -151,5 +151,5 @@ for task in "${TASKS[@]}"; do
 done
 
 log ""
-log "로그: results/*.log"
-log "완료!"
+log "log: results/*.log"
+log "done!"

@@ -1,7 +1,7 @@
 # MIMIC-IV-ECG Biometrics (regression, 3 outputs)
-# 원본 paper Table: 119,214 samples × 3 outputs
-# Sources: omr.csv.gz + chartevents.csv.gz 보강
-# Window: ECG-time 기준 closest 30일 매칭
+# original paper Table: 119,214 samples × 3 outputs
+# Sources: omr.csv.gz + chartevents.csv.gz enrich
+# Window: ECG-time reference: closest 30case matching
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0

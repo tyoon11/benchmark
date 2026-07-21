@@ -1,5 +1,5 @@
-# EchoNext — 원본 ecg-fm-benchmarking과 동일: 11-label multi-label
-# (composite shd_moderate_or_greater_flag는 11개의 OR이므로 제외)
+# EchoNext — matches the original ecg-fm-benchmarking: 11-label multi-label
+# (composite shd_moderate_or_greater_flag 11  OR exclude)
 # ref: ecg-fm-benchmarking/code/main_lite_ecg.py:65 (num_classes=11)
 #      ecg-fm-benchmarking/code/clinical_ts/utils/ecg_utils.py:1344 (lbl_itos)
 task:
@@ -29,12 +29,12 @@ data:
   source_fs: 250
   target_fs: 250
   target_length: 2500          # 250Hz × 10s
-  normalize: false             # 데이터셋 자체가 이미 z-score 정규화됨
+  normalize: false             # dataset  already z-score normalization 
   layout: NHWC                 # (N, 1, T, C)
   n_leads: 12
   batch_size: 64
   num_workers: 8
 
-# strat_fold가 없으므로 auto_split 비활성
+# strat_fold  auto_split 
 fold:
   auto_split: false

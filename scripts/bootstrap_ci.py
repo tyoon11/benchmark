@@ -1,26 +1,26 @@
 """
 Empirical bootstrap (n=1000) — single-model 95% CI
 ===================================================
-저장된 preds.npy/targets.npy 를 읽어서 primary metric의
-경험적 부트스트랩 95% CI를 계산합니다.
+saveed preds.npy/targets.npy  primary metric's
+ bootstrap 95% CI compute.
 
 Primary metric:
-  - 분류 (binary / multi-label-binary): macro-averaged AUROC
-  - 회귀 (regression):                  z-normalized MAE
-    (preds/targets 가 이미 z-normalized 공간이므로 단순 MAE = z-norm MAE)
+  -  (binary / multi-label-binary): macro-averaged AUROC
+  - time (regression):                  z-normalized MAE
+    (preds/targets already z-normalized  justorder MAE = z-norm MAE)
 
-CI 산출 방식 (paper의 empirical_bootstrap 재현):
+CI   (paper's empirical_bootstrap reproduction):
   diffs   = bootstrap_scores - point_estimate
   CI_low  = point + percentile(diffs, 2.5)
   CI_high = point + percentile(diffs, 97.5)
 
-사용법:
+Usage:
   python scripts/bootstrap_ci.py --result_dir <DIR>
   python scripts/bootstrap_ci.py --root <RESULT_ROOT> [--n_iters 1000]
 
-출력:
+output:
   <result_dir>/bootstrap.json   point/ci_low/ci_high/n_iters
-  <root>/bootstrap_summary.csv  전체 요약 (model, task, mode, point, ci_low, ci_high)
+  <root>/bootstrap_summary.csv  all summary (model, task, mode, point, ci_low, ci_high)
 """
 
 import os
@@ -47,7 +47,7 @@ logger = logging.getLogger("bootstrap_ci")
 # Primary metric functions (sample-axis bootstrappable)
 # ──────────────────────────────────────────────────────────────────
 def macro_auroc(targets, preds):
-    """Multi-label macro AUROC. 양성/음성이 모두 존재하는 클래스만 평균."""
+    """Multi-label macro AUROC. positive/negative all re- do class only ."""
     n_classes = targets.shape[1]
     aucs = []
     for i in range(n_classes):
@@ -63,7 +63,7 @@ def macro_auroc(targets, preds):
 
 
 def znorm_mae(targets, preds):
-    """다변량 회귀: per-target MAE의 macro 평균. NaN 마스킹."""
+    """multivariate time: per-target MAE's macro . NaN masking."""
     n_targets = targets.shape[1]
     maes = []
     for i in range(n_targets):
@@ -81,11 +81,11 @@ def get_metric_fn(task_type: str):
 
 
 # ──────────────────────────────────────────────────────────────────
-# Empirical bootstrap (paper의 clinical_ts.utils.bootstrap_utils 재현)
+# Empirical bootstrap (paper's clinical_ts.utils.bootstrap_utils reproduction)
 # ──────────────────────────────────────────────────────────────────
 def empirical_bootstrap(targets, preds, score_fn, n_iters=1000, alpha=0.95, seed=0):
     """
-    경험적 부트스트랩 (resample with replacement).
+     bootstrap (resample with replacement).
 
     Returns: dict(point, ci_low, ci_high, scores)
     """
@@ -111,7 +111,7 @@ def empirical_bootstrap(targets, preds, score_fn, n_iters=1000, alpha=0.95, seed
 
 
 # ──────────────────────────────────────────────────────────────────
-# 한 폴더 처리
+# directory handling
 # ──────────────────────────────────────────────────────────────────
 def process(result_dir: Path, n_iters: int, seed: int, force: bool):
     out_path = result_dir / "bootstrap.json"
@@ -166,7 +166,7 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--force", action="store_true")
     p.add_argument("--workers", type=int, default=1,
-                   help="병렬 worker 수 (기본 1=직렬). 코어수까지 권장.")
+                   help="parallel worker (default 1=).  .")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -177,7 +177,7 @@ def main():
         return
 
     if not args.root:
-        p.error("--result_dir 또는 --root 중 하나는 필요")
+        p.error("--result_dir or --root  of one required")
 
     root = Path(args.root)
     dirs = sorted(d for d in root.iterdir() if d.is_dir() and (d / "preds.npy").exists())

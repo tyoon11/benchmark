@@ -1,7 +1,7 @@
 # MIMIC-IV-ECG ECG features (regression, 7 outputs)
-# 원본 paper Table: 181,989 samples × 7 outputs
+# original paper Table: 181,989 samples × 7 outputs
 # Features: RR, QRS, QT, QTc, P_wave_axis, QRS_axis, T_wave_axis
-# 원본 mimic_preprocessing.py 그대로 — outlier 제거 후 raw 값.
+# original mimic_preprocessing.py as-is — outlier remove after raw value.
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0

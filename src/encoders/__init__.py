@@ -7,3 +7,4 @@ from .ecgfm_ked import EcgFmKEDEncoder
 from .hubert_ecg import HuBERTECGEncoder
 from .cpc import CPCEncoder
 from .moryecg import MoRyECGEncoder
+from .moryecg_a5 import MoRyECGA5Encoder

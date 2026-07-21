@@ -132,6 +132,14 @@ $ECG_CKPT_ROOT/
 **MoRyECG:** checkpoint is auto-located from `MORYECG_REPO` (defaults to the
 parent of this `benchmark/` directory if cloned inside the MoRyECG repo).
 See [tyoon11/MoryECG](https://github.com/tyoon11/MoryECG) for pretrained checkpoints.
+Two encoder families are available:
+
+- `src.encoders.moryecg.MoRyECGEncoder` — the transformer backbone (codebook
+  variants `moryecg_cb128` … `moryecg_cb2048`, `d_model=512`).
+- `src.encoders.moryecg_a5.MoRyECGA5Encoder` — the **A5** Axial S4D + MHA
+  backbone (`moryecg_a5`, `d_model=384`, ~26M params). It loads
+  `axial_s4` pretrain checkpoints and auto-derives the frozen VQ tokenizer;
+  override it with `MORYECG_A5_TOKENIZER` if it lives outside the default layout.
 
 ---
 
@@ -161,6 +169,13 @@ python run.py \
     --task ptbxl_super --eval_mode linear_probe \
     --encoder_cls src.encoders.moryecg.MoRyECGEncoder \
     --encoder_ckpt /path/to/MoryECG/checkpoints/pretrain_heedb_cb1024_v4/best.pt
+
+# MoRyECG A5 (Axial S4D + MHA backbone)
+MORYECG_REPO=/path/to/MoryECG \
+python run.py \
+    --task ptbxl_super --eval_mode linear_probe \
+    --encoder_cls src.encoders.moryecg_a5.MoRyECGA5Encoder \
+    --encoder_ckpt /path/to/MoryECG/checkpoints/pretrain_axial_s4_a5_heedb_full_cb1024/best.pt
 ```
 
 Results are saved under `results/<timestamp>/<model>_<task>_<mode>/`.

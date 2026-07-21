@@ -59,6 +59,7 @@ MODEL_CLS_MAP = {
     "ecg_fm":         "src.encoders.ecg_fm.ECGFMEncoder",
     "cpc":            "src.encoders.cpc.CPCEncoder",
     "moryecg_cb1024": "src.encoders.moryecg.MoRyECGEncoder",
+    "moryecg_a5":     "src.encoders.moryecg_a5.MoRyECGA5Encoder",
 }
 MODEL_CKPT_MAP = {
     "ecg_founder":    f"{ECG_CKPT_ROOT}/ecg_founder/12_lead_ECGFounder.pth",
@@ -70,6 +71,14 @@ MODEL_CKPT_MAP = {
     "ecg_fm":         f"{ECG_CKPT_ROOT}/ecg_fm/mimic_iv_ecg_physionet_pretrained.pt",
     "cpc":            f"{ECG_CKPT_ROOT}/cpc/last_11597276.ckpt",
     "moryecg_cb1024": f"{MORYECG_REPO}/checkpoints/pretrain_heedb_cb1024_v4/best.pt",
+    # NOTE: the benchmark heads were trained with run1's encoder (epoch 5,
+    # val_acc_nontop=0.474). A new run2 pretrain has since overwritten the main
+    # best.pt, so for feature-consistent extraction we MUST point at the archived
+    # run1 checkpoint. Override with MORYECG_A5_CKPT if you re-benchmark on run2.
+    "moryecg_a5":     os.environ.get(
+        "MORYECG_A5_CKPT",
+        f"{MORYECG_REPO}/checkpoints/pretrain_axial_s4_a5_heedb_full_cb1024/_run1_archive_20260608/best.pt",
+    ),
 }
 
 EVAL_MODES = ["attention_probe", "finetune_attention", "finetune_linear", "linear_probe"]
@@ -216,7 +225,16 @@ def run_inference(model, loader, device, task_type):
     for batch in loader:
         signal = batch["signal"].to(device)
         label = batch["label"]
-        logits = model(signal)
+        # Forward MoRyECG preprocessing-cache keys when the dataset provides them
+        # so the encoder loads cached beats/rr/stft instead of recomputing R-peaks
+        # live (orders of magnitude faster, esp. for large MIMIC test sets).
+        # DownstreamWrapper filters these out for encoders that don't accept them.
+        enc_kwargs = {}
+        if "ecg_filepath" in batch:
+            enc_kwargs["ecg_filepath"] = batch["ecg_filepath"]
+        if "ecg_seg_idx" in batch:
+            enc_kwargs["ecg_seg_idx"] = batch["ecg_seg_idx"]
+        logits = model(signal, **enc_kwargs)
         if task_type == "regression":
             preds = logits.cpu().numpy()
         else:

@@ -1,5 +1,5 @@
 # MIMIC-IV-ECG Mortality (multi-label binary with NaN, 7 horizons)
-# 원본 paper Table: 17,639 samples × 7 outputs (1d/7d/28d/90d/180d/365d/stay)
+# original paper Table: 17,639 samples × 7 outputs (1d/7d/28d/90d/180d/365d/stay)
 # Source: mds_ed.csv (multimodal-emergency-benchmark)
 data:
   batch_size: 64

@@ -1,5 +1,5 @@
 # MIMIC-IV-ECG ICU admission (multi-label binary with NaN, 2 outputs)
-# 원본 paper Table: 18,690 samples × 2 outputs
+# original paper Table: 18,690 samples × 2 outputs
 # Source: mds_ed.csv (multimodal-emergency-benchmark)
 data:
   batch_size: 64

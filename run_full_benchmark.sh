@@ -26,7 +26,7 @@ cd "$SCRIPT_DIR"
 
 # CPC(S4/pykeops)  do GLIBCXX_3.4.32   libstdc++ none.
 # rationale: ship a newer libstdc++ to the JIT-compiled nvrtc_jit.so (see README)
-export LD_PRELOAD=/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6
+export LD_PRELOAD=${HOME}/.conda/envs/ecg-fm/lib/libstdc++.so.6
 
 if [ -n "$RESUME_TS" ]; then
     TIMESTAMP="$RESUME_TS"
@@ -79,7 +79,7 @@ N_GPUS=${#GPU_IDS[@]}
 if [ -n "$TASKS_OVERRIDE" ]; then
     TASKS=($TASKS_OVERRIDE)
 else
-    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm sph_diag zzu_pecg echonext mimic)
+    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm sph_diag zzu_pecg echonext)
 fi
 
 # ─────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 """
 ECG-JEPA Encoder Adapter for Benchmark
 ========================================
-paper's clinical_ts (ecg-fm-benchmarking) 의 MaskTransformer를 벤치마크
-인터페이스로 래핑합니다.
+paper's clinical_ts (ecg-fm-benchmarking) of MaskTransformer benchmark
+is .
 
-사용:
+use:
   python run.py --task ptbxl_super --eval_mode linear_probe \
       --encoder_cls src.encoders.ecg_jepa.ECGJEPAEncoder \
       --encoder_ckpt /path/to/best.pth
@@ -25,17 +25,17 @@ class ECGJEPAEncoder(nn.Module):
     """
     ECG-JEPA encoder wrapper.
 
-    Benchmark 인터페이스:
+    Benchmark is:
       forward(x) → (sequence_features, pooled_features)
-        - x: (B, 12, 5000) — 12리드, 500Hz × 10초 → 8리드 선택 후 250Hz로 리샘플
-        - sequence_features: (B, 400, 768) — 8리드 × 50패치
+        - x: (B, 12, 5000) — 12leads, 500Hz × 10s → 8leads optional after 250Hz by resample
+        - sequence_features: (B, 400, 768) — 8leads × 50
         - pooled_features: (B, 768) — GAP
 
-    Note: 체크포인트가 8채널(I, II, V1-V6)로 학습되었으므로 c=8 사용.
-          12리드 입력에서 [0, 1, 6, 7, 8, 9, 10, 11] 채널을 선택합니다.
+    Note: checkpointis 8-channel(I, II, V1-V6) by training c=8 use.
+          12leads input from [0, 1, 6, 7, 8, 9, 10, 11] channel optional.
     """
 
-    # 12리드 중 8채널 선택: I, II, V1, V2, V3, V4, V5, V6
+    # 12leads  of 8-channel optional: I, II, V1, V2, V3, V4, V5, V6
     SELECTED_LEADS = [0, 1, 6, 7, 8, 9, 10, 11]
 
     # Paper: input_size=10s, fs_model=250 → 2500 samples per window (full ECG).
@@ -94,12 +94,12 @@ class ECGJEPAEncoder(nn.Module):
 
     def forward(self, x):
         """
-        x: (B, 12, T) at data target_fs → 8채널 선택 후 2500 samples (10s @ 250Hz)
+        x: (B, 12, T) at data target_fs → 8-channel optional after 2500 samples (10s @ 250Hz)
         → (sequence_features, pooled_features)
         """
         x = torch.nan_to_num(x)
 
-        # 12리드에서 8채널 선택
+        # 12leads from 8-channel optional
         if x.shape[1] == 12:
             x = x[:, self.SELECTED_LEADS, :]
 

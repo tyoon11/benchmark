@@ -29,6 +29,9 @@ declare -A MODEL_CLS_MAP=(
     [moryecg_cb512]="src.encoders.moryecg.MoRyECGEncoder"
     [moryecg_cb1024]="src.encoders.moryecg.MoRyECGEncoder"
     [moryecg_cb2048]="src.encoders.moryecg.MoRyECGEncoder"
+    # MoRyECG A5: Axial S4D + MHA backbone (d_model=384, ~26M), cb1024, full HEEDB pretrain.
+    # Dedicated adapter (does NOT reuse the transformer-family MoRyECGEncoder).
+    [moryecg_a5]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
 )
 
 # MoRyECG pretrain repo. Defaults to the parent of this benchmark directory
@@ -50,6 +53,9 @@ declare -A MODEL_CKPT_MAP=(
     [moryecg_cb512]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_heedb_cb512_v4/best.pt"
     [moryecg_cb1024]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_heedb_cb1024_v4/best.pt"
     [moryecg_cb2048]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_heedb_cb2048_v4/best.pt"
+    # A5 axial_s4 pretrain output (configs/pretrain/axial_s4_a5_heedb_full_cb1024.yaml).
+    # Tokenizer auto-derived → checkpoints/tokenizer_heedb_full_cb1024_v4/best.pt
+    [moryecg_a5]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_axial_s4_a5_heedb_full_cb1024/best.pt"
 )
 
 # Default run order (when MODELS_OVERRIDE is unset).

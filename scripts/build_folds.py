@@ -1,27 +1,27 @@
 """
-Stratified Fold 생성 — ecg-fm-benchmarking 논문과 동일
+Stratified Fold generate — ecg-fm-benchmarking paper and identical
 =========================================================
-논문의 stratify() 함수를 그대로 사용하여 각 데이터셋의 table CSV에
-strat_fold 컬럼을 추가합니다.
+paper's stratify() function as-is use each dataset's table CSV in
+strat_fold column add.
 
-전략 (논문과 동일):
-  - physionet 데이터셋 (ningbo, cpsc2018, cpsc_extra, georgia, chapman, ptb):
-    → 파일 기반 라벨 stratified split (10-fold)
-    → "does not incorporate patient-level split" (논문 코드 주석)
+before (paper and identical):
+  - physionet dataset (ningbo, cpsc2018, cpsc_extra, georgia, chapman, ptb):
+    → file based label stratified split (10-fold)
+    → "does not incorporate patient-level split" (paper code comment)
   - ptbxl:
-    → 원본 ptbxl_database.csv의 strat_fold 1~10 사용 (환자 기반, 원본 제공)
-    → 없으면 파일 기반 fallback
+    → original ptbxl_database.csv's strat_fold 1~10 use (patient based, original )
+    → if absent, file based fallback
   - code15:
-    → 환자(id_patient) 기반 stratified split (논문의 stratify_batched)
+    → patient(id_patient) based stratified split (paper's stratify_batched)
   - zzu:
-    → 파일 기반 라벨 stratified split (10-fold)
+    → file based label stratified split (10-fold)
 
-Split 규칙:
+Split :
   train = strat_fold < max_fold - 1
   val   = strat_fold == max_fold - 1
   test  = strat_fold == max_fold
 
-실행:
+run:
   python scripts/build_folds.py --all
   python scripts/build_folds.py --dataset ptbxl
 """
@@ -38,34 +38,34 @@ from tqdm.auto import tqdm
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# ecg-fm-benchmarking의 stratify 함수 import
-sys.path.insert(0, str(Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/code")))
+# ecg-fm-benchmarking's stratify function import
+sys.path.insert(0, str(Path("/path/to/workspace/ecg-fm-benchmarking/code")))
 from clinical_ts.utils.stratify import stratify
 
-H5_ROOT = Path("/home/irteam/ddn-opendata1/h5")
+H5_ROOT = Path("/path/to/ecg_data/h5")
 LABEL_DIR = SCRIPT_DIR / "labels"
 
 DATASETS = {
-    # physionet: 파일 기반 라벨 stratify (논문 동일)
+    # physionet: file based label stratify (paper identical)
     "chapman":      {"table": H5_ROOT / "physionet/v2.0/chapman_table.csv",      "label": LABEL_DIR / "chapman_paper_labels.csv",      "n_folds": 10, "method": "label"},
     "cpsc2018":     {"table": H5_ROOT / "physionet/v2.0/cpsc2018_table.csv",     "label": LABEL_DIR / "cpsc2018_paper_labels.csv",     "n_folds": 10, "method": "label"},
     "cpsc_extra":   {"table": H5_ROOT / "physionet/v2.0/cpsc_extra_table.csv",   "label": LABEL_DIR / "cpsc_extra_paper_labels.csv",   "n_folds": 10, "method": "label"},
     "georgia":      {"table": H5_ROOT / "physionet/v2.0/georgia_table.csv",      "label": LABEL_DIR / "georgia_paper_labels.csv",      "n_folds": 10, "method": "label"},
     "ningbo":       {"table": H5_ROOT / "physionet/v2.0/ningbo_table.csv",       "label": LABEL_DIR / "ningbo_paper_labels.csv",       "n_folds": 10, "method": "label"},
     "ptb":          {"table": H5_ROOT / "physionet/v2.0/ptb_table.csv",          "label": LABEL_DIR / "ptb_paper_labels.csv",          "n_folds": 5,  "method": "label"},
-    # ptbxl: 원본 strat_fold 사용
+    # ptbxl: original strat_fold use
     "ptbxl":        {"table": H5_ROOT / "physionet/v2.0/ptbxl_table.csv",        "label": LABEL_DIR / "ptbxl_all_paper_labels.csv",    "n_folds": 10, "method": "ptbxl_original"},
-    # code15: 환자 기반 stratify
+    # code15: patient based stratify
     "code15":       {"table": H5_ROOT / "code15/v2.0/code15_table.csv",          "label": LABEL_DIR / "code15_paper_labels.csv",       "n_folds": 10, "method": "patient"},
-    # zzu: 파일 기반
+    # zzu: file based
     "zzu_pecg":     {"table": H5_ROOT / "ZZU-pECG/v2.0/ecg_table.csv",          "label": LABEL_DIR / "zzu_paper_labels.csv",          "n_folds": 10, "method": "label"},
-    # sph: 환자 기반 (prepare_data_sph와 동일: stratified 10-fold by patient_id)
+    # sph: patient based (prepare_data_sph and identical: stratified 10-fold by patient_id)
     "sph":          {"table": H5_ROOT / "sph/v2.0/sph_table.csv",               "label": LABEL_DIR / "sph_paper_labels.csv",          "n_folds": 10, "method": "patient"},
 }
 
 
 def get_label_lists(table_df, label_df):
-    """라벨 CSV에서 multi-label 리스트를 추출합니다."""
+    """label CSV from multi-label list extract."""
     merged = table_df.merge(label_df, on="filepath", how="left", suffixes=("", "_label"))
     key_cols = {"filepath", "dataset", "pid", "rid", "sid", "oid",
                 "age", "gender", "height", "weight", "fs", "channel_name",
@@ -73,7 +73,7 @@ def get_label_lists(table_df, label_df):
                 "bs_corr", "bs_dtw"}
     label_cols = [c for c in label_df.columns if c not in key_cols]
 
-    # 각 샘플의 라벨 인덱스 리스트
+    # each samples's label isdex list
     data = []
     for _, row in merged.iterrows():
         labels = []
@@ -89,8 +89,8 @@ def get_label_lists(table_df, label_df):
 
 def build_fold_label_stratify(table_csv, label_csv, n_folds=10):
     """
-    논문의 stratify() 함수로 파일 기반 라벨 stratified fold 생성.
-    Ningbo, CPSC2018, CPSC-Extra, Georgia, Chapman, PTB, ZZU와 동일.
+    paper's stratify() function file based label stratified fold generate.
+    Ningbo, CPSC2018, CPSC-Extra, Georgia, Chapman, PTB, ZZU and identical.
     """
     table = pd.read_csv(table_csv, low_memory=False)
     labels = pd.read_csv(label_csv, low_memory=False)
@@ -109,17 +109,17 @@ def build_fold_label_stratify(table_csv, label_csv, n_folds=10):
 
 def build_fold_ptbxl_original(table_csv, label_csv, n_folds=10):
     """
-    PTB-XL: 원본 ptbxl_database.csv의 strat_fold 사용.
-    원본이 없으면 WFDB 파일명에서 ecg_id 추출 후 매핑.
+    PTB-XL: original ptbxl_database.csv's strat_fold use.
+    original if absent, WFDB file name from ecg_id extract after mapping.
     """
     import glob
 
     table = pd.read_csv(table_csv, low_memory=False)
 
-    # 원본 ptbxl_database.csv 찾기
+    # original ptbxl_database.csv 
     ptbxl_db_candidates = [
-        Path("/home/irteam/ddn-opendata1/raw/physionet.org/files/ptb-xl/1.0.3/ptbxl_database.csv"),
-        Path("/home/irteam/ddn-opendata1/raw/physionet.org/files/ptb-xl/1.0.1/ptbxl_database.csv"),
+        Path("/path/to/ecg_data/raw/physionet.org/files/ptb-xl/1.0.3/ptbxl_database.csv"),
+        Path("/path/to/ecg_data/raw/physionet.org/files/ptb-xl/1.0.1/ptbxl_database.csv"),
     ]
 
     ptbxl_db = None
@@ -129,43 +129,43 @@ def build_fold_ptbxl_original(table_csv, label_csv, n_folds=10):
             break
 
     if ptbxl_db is not None:
-        logging.info(f"  PTB-XL 원본 strat_fold 사용: {ptbxl_db}")
+        logging.info(f"  PTB-XL original strat_fold use: {ptbxl_db}")
         db = pd.read_csv(ptbxl_db, index_col="ecg_id")
 
-        # file_name.csv에서 original_filename → h5 filepath 매핑
+        # file_name.csv from original_filename → h5 filepath mapping
         fn_csv = H5_ROOT / "physionet/v2.0/file_name.csv"
         fn_df = pd.read_csv(fn_csv)
         fn_df = fn_df[fn_df["dataset"] == "ptbxl"]
 
-        # original_filename (예: HR00001) → ptbxl_database의 filename_hr에서 매칭
+        # original_filename (example: HR00001) → ptbxl_database's filename_hr from matching
         # ptbxl_database filename_hr: records500/00000/00001_hr
         ecg_id_map = {}
         for ecg_id, row in db.iterrows():
             fn_hr = str(row.get("filename_hr", ""))
-            # 끝부분에서 파일명 추출: records500/00000/00001_hr → 00001
+            #  from file name extract: records500/00000/00001_hr → 00001
             stem = Path(fn_hr).stem.replace("_hr", "").replace("_lr", "")
-            # HR00001 형식으로 변환
+            # HR00001  as convert
             hr_name = f"HR{stem}"
             ecg_id_map[hr_name] = int(row.get("strat_fold", -1))
 
-        # h5 filepath → original_filename → strat_fold 매핑
+        # h5 filepath → original_filename → strat_fold mapping
         orig_map = dict(zip(fn_df["h5_filepath"], fn_df["original_filename"]))
         table["strat_fold"] = table["filepath"].apply(
             lambda fp: ecg_id_map.get(orig_map.get(fp, ""), -1)
         )
 
-        # 매핑 확인
+        # mapping confirm
         matched = (table["strat_fold"] >= 0).sum()
-        logging.info(f"  원본 fold 매핑: {matched:,}/{len(table):,}")
+        logging.info(f"  original fold mapping: {matched:,}/{len(table):,}")
 
         if matched < len(table) * 0.5:
-            logging.warning("  매핑률 낮음 → fallback to label stratify")
+            logging.warning("  mapping rate  → fallback to label stratify")
             return build_fold_label_stratify(table_csv, label_csv, n_folds)
     else:
-        logging.warning("  ptbxl_database.csv 없음 → fallback to label stratify")
+        logging.warning("  ptbxl_database.csv none → fallback to label stratify")
         return build_fold_label_stratify(table_csv, label_csv, n_folds)
 
-    # fold 범위를 0-based로 변환 (원본은 1~10)
+    # fold above 0-based by convert (original 1~10)
     if table["strat_fold"].min() == 1:
         table["strat_fold"] = table["strat_fold"] - 1
 
@@ -175,8 +175,8 @@ def build_fold_ptbxl_original(table_csv, label_csv, n_folds=10):
 
 def build_fold_patient_stratify(table_csv, label_csv, n_folds=10):
     """
-    CODE-15%: 환자(pid) 기반 stratified fold.
-    논문의 stratify_batched와 동일한 접근.
+    CODE-15%: patient(pid) based stratified fold.
+    paper's stratify_batched and identical .
     """
     table = pd.read_csv(table_csv, low_memory=False)
     labels = pd.read_csv(label_csv, low_memory=False)
@@ -188,7 +188,7 @@ def build_fold_patient_stratify(table_csv, label_csv, n_folds=10):
                 "bs_corr", "bs_dtw"}
     label_cols = [c for c in labels.columns if c not in key_cols]
 
-    # 환자별 라벨 집약
+    # patient per label 
     def get_patient_labels(group):
         all_labels = []
         for _, row in group.iterrows():
@@ -207,7 +207,7 @@ def build_fold_patient_stratify(table_csv, label_csv, n_folds=10):
     stratified_ids = stratify(patient_labels, classes, ratios,
                               samples_per_group=patient_counts, random_seed=0)
 
-    # 환자 ID → fold 매핑
+    # patient ID → fold mapping
     patient_fold = {}
     for fold_idx, indices in enumerate(stratified_ids):
         for idx in indices:
@@ -226,7 +226,7 @@ METHOD_MAP = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Stratified Fold 생성 (논문 동일)")
+    parser = argparse.ArgumentParser(description="Stratified Fold generate (paper identical)")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--dataset", type=str, default=None)
     args = parser.parse_args()
@@ -246,16 +246,16 @@ def main():
         cfg = DATASETS[ds]
         logging.info(f"\n=== {ds} (method={cfg['method']}) ===")
         if not cfg["table"].exists():
-            logging.warning(f"  table CSV 없음: {cfg['table']}")
+            logging.warning(f"  table CSV none: {cfg['table']}")
             continue
         if not cfg["label"].exists():
-            logging.warning(f"  label CSV 없음: {cfg['label']}")
+            logging.warning(f"  label CSV none: {cfg['label']}")
             continue
 
         builder = METHOD_MAP[cfg["method"]]
         n_folds = builder(cfg["table"], cfg["label"], cfg["n_folds"])
 
-        # 분포 확인
+        #  confirm
         df = pd.read_csv(cfg["table"], usecols=["strat_fold"])
         dist = df["strat_fold"].value_counts().sort_index()
         max_fold = int(dist.index.max())
@@ -265,7 +265,7 @@ def main():
         logging.info(f"  {n_folds}-fold (max={max_fold})")
         logging.info(f"  train: {train_n:,} / val: {val_n:,} / test: {test_n:,}")
 
-    logging.info("\n완료!")
+    logging.info("\ndone!")
 
 
 if __name__ == "__main__":

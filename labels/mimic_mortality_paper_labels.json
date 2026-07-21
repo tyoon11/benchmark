@@ -1,6 +1,6 @@
 {
   "dataset": "mimic_mortality",
-  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 7 mortality horizons (1d/7d/28d/90d/180d/365d/stay).",
+  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv of 7 mortality horizons (1d/7d/28d/90d/180d/365d/stay).",
   "task_type": "multi-label-binary",
   "n_labels": 7,
   "labels": {

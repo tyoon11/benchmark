@@ -1,17 +1,17 @@
 """
-벤치마크 라벨 생성 스크립트
+Benchmark label build script
 =============================
-ecg-fm-benchmarking 논문의 벤치마크 태스크에 맞는 라벨 CSV를 생성합니다.
-WFDB .hea 파일에서 SNOMED 코드를 직접 파싱하고, Label Mappings xlsx로 진단명 매핑.
+Build label CSVs matching the benchmark tasks of the ecg-fm-benchmarking paper.
+WFDB .hea file from SNOMED code directly parsingand, Label Mappings xlsx by diagnosis mapping.
 
-생성되는 라벨 CSV:
-  physionet/{dataset}_bench_labels.csv  — SNOMED multi-label (데이터셋별)
-  ptbxl_bench_labels_{task}.csv         — PTB-XL 서브태스크 (super/sub/all/diag/form/rhythm)
-  zzu_bench_labels.csv                  — ZZU AHA 기반
+generate label CSV:
+  physionet/{dataset}_bench_labels.csv  — SNOMED multi-label (per-dataset)
+  ptbxl_bench_labels_{task}.csv         — PTB-XL subtask (super/sub/all/diag/form/rhythm)
+  zzu_bench_labels.csv                  — ZZU AHA based
   code15_bench_labels.csv               — CODE-15% 6-class
   cpsc2021_bench_labels.csv             — CPSC2021 AF 3-class
 
-실행:
+run:
   python scripts/build_benchmark_labels.py --all
   python scripts/build_benchmark_labels.py --dataset ptbxl
 """
@@ -29,17 +29,17 @@ from pathlib import Path
 from collections import Counter
 
 # ═══════════════════════════════════════════════════════════════
-# 경로
+# path
 # ═══════════════════════════════════════════════════════════════
-H5_ROOT = Path("/home/irteam/ddn-opendata1/h5")
-RAW_ROOT = Path("/home/irteam/ddn-opendata1/raw/physionet.org/files")
+H5_ROOT = Path("/path/to/ecg_data/h5")
+RAW_ROOT = Path("/path/to/ecg_data/raw/physionet.org/files")
 CHALLENGE_BASE = RAW_ROOT / "challenge-2021/1.0.3/training"
-LABEL_XLSX = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/Label mappings 2021.xlsx")
-BENCHMARK_DIR = Path("/home/irteam/local-node-d/tykim/benchmark")
+LABEL_XLSX = Path("/path/to/workspace/ecg-fm-benchmarking/Label mappings 2021.xlsx")
+BENCHMARK_DIR = Path("/path/to/workspace/benchmark")
 
-MIN_CNT = 10  # 최소 양성 수
+MIN_CNT = 10  # min positive 
 
-# 데이터셋별 WFDB 경로 + xlsx 시트명
+# per-dataset WFDB path + xlsx 
 SNOMED_DATASETS = {
     "chapman":      {"wfdb_dir": CHALLENGE_BASE / "chapman_shaoxing", "sheet": "Chapman"},
     "cpsc2018":     {"wfdb_dir": CHALLENGE_BASE / "cpsc_2018",        "sheet": "CPSC"},
@@ -53,10 +53,10 @@ SNOMED_DATASETS = {
 
 
 # ═══════════════════════════════════════════════════════════════
-# SNOMED 라벨 추출 (physionet 공통)
+# SNOMED label extract (physionet common)
 # ═══════════════════════════════════════════════════════════════
 def load_snomed_mapping(sheet_name: str) -> dict:
-    """Label Mappings xlsx에서 SNOMED code → diagnosis name 매핑 로드"""
+    """Label Mappings xlsx from SNOMED code → diagnosis name mapping load"""
     df = pd.read_excel(LABEL_XLSX, sheet_name=sheet_name, dtype={"SNOMED code": str})
     df = df.dropna(subset=["SNOMED code"])
     mapping = {}
@@ -68,7 +68,7 @@ def load_snomed_mapping(sheet_name: str) -> dict:
 
 
 def parse_wfdb_dx(hea_path: str) -> list:
-    """WFDB .hea 파일에서 # Dx: SNOMED 코드 목록 추출"""
+    """WFDB .hea file from # Dx: SNOMED code list extract"""
     try:
         rec = wfdb.rdheader(hea_path)
         for c in (rec.comments or []):
@@ -83,7 +83,7 @@ def parse_wfdb_dx(hea_path: str) -> list:
 
 def build_snomed_labels(dataset_name: str, min_cnt: int = MIN_CNT):
     """
-    physionet 데이터셋의 SNOMED 기반 multi-label CSV 생성.
+    physionet dataset's SNOMED based multi-label CSV generate.
 
     Returns: (DataFrame, label_cols, lbl_itos)
     """
@@ -91,18 +91,18 @@ def build_snomed_labels(dataset_name: str, min_cnt: int = MIN_CNT):
     wfdb_dir = cfg["wfdb_dir"]
     snomed_map = load_snomed_mapping(cfg["sheet"])
 
-    logging.info(f"  SNOMED mapping: {len(snomed_map)}개 ({cfg['sheet']})")
+    logging.info(f"  SNOMED mapping: {len(snomed_map)} ({cfg['sheet']})")
 
-    # file_name.csv로 h5 filepath → original_filename 매핑
+    # file_name.csv by h5 filepath → original_filename mapping
     fn_csv = H5_ROOT / "physionet/v2.0/file_name.csv"
     fn_df = pd.read_csv(fn_csv)
     fn_df = fn_df[fn_df["dataset"] == dataset_name]
     orig_to_h5fp = dict(zip(fn_df["original_filename"].astype(str),
                             fn_df["h5_filepath"].astype(str)))
 
-    # 모든 .hea 파일에서 SNOMED 코드 파싱
+    # all .hea file from SNOMED code parsing
     hea_files = sorted(glob.glob(str(wfdb_dir / "g*" / "*.hea")))
-    logging.info(f"  .hea 파일: {len(hea_files)}개")
+    logging.info(f"  .hea file: {len(hea_files)}")
 
     records = []
     for hea in hea_files:
@@ -116,18 +116,18 @@ def build_snomed_labels(dataset_name: str, min_cnt: int = MIN_CNT):
         if h5_fp:
             records.append({"filepath": h5_fp, "record": rec_name, "diags": diags})
 
-    logging.info(f"  맵핑된 레코드: {len(records)}개")
+    logging.info(f"  mappinged record: {len(records)}")
 
-    # 빈도 기반 라벨 선정
+    #  based label 
     diag_freq = Counter()
     for r in records:
         for d in r["diags"]:
             diag_freq[d] += 1
 
     selected = [d for d, cnt in diag_freq.most_common() if cnt >= min_cnt]
-    logging.info(f"  라벨 (≥{min_cnt}건): {len(selected)}개")
+    logging.info(f"  label (≥{min_cnt}): {len(selected)}")
 
-    # DataFrame 구축
+    # DataFrame 
     label_cols = [d.replace(" ", "_").replace(",", "").replace("-", "_")
                   .replace("(", "").replace(")", "").replace("'", "")
                   for d in selected]
@@ -143,27 +143,27 @@ def build_snomed_labels(dataset_name: str, min_cnt: int = MIN_CNT):
 
     df = pd.DataFrame(rows)
 
-    # lbl_itos 정보
+    # lbl_itos 
     lbl_itos = {col: diag for diag, col in diag_to_col.items()}
 
     return df, label_cols, lbl_itos
 
 
 # ═══════════════════════════════════════════════════════════════
-# PTB-XL 서브태스크 (SCP 코드 기반)
+# PTB-XL subtask (SCP code based)
 # ═══════════════════════════════════════════════════════════════
 def build_ptbxl_subtask_labels(min_cnt: int = MIN_CNT):
     """
-    PTB-XL의 WFDB 헤더에서 SNOMED 코드 기반 라벨을 만들되,
-    PTB-XL 전용 서브태스크도 SNOMED 매핑에서 유도합니다.
+    PTB-XL's WFDB header from SNOMED code based label  only,
+    PTB-XL before (for) subtask also SNOMED mapping from .
 
-    반환: dict of task_name → (DataFrame, label_cols)
+    return: dict of task_name → (DataFrame, label_cols)
     """
-    # 먼저 기본 SNOMED 라벨 생성 (ptbxl 전체)
+    # first, default SNOMED label generate (ptbxl all)
     df_all, all_cols, all_itos = build_snomed_labels("ptbxl", min_cnt=min_cnt)
 
-    # PTB-XL 서브태스크 정의 — SNOMED 약어 코드 기반 직접 매핑
-    # (all_itos가 약어→약어로 매핑되므로 풀네임 매칭 대신 코드 직접 지정)
+    # PTB-XL subtask definitions — SNOMED abbreviation code based directly mapping
+    # (all_itos abbreviation→abbreviation by mapping  matching  code directly )
     SUPERCLASS_CODE_MAP = {
         "NORM": ["SR"],
         "MI":   ["AMI", "PMI", "ISCIL", "ISCIN", "ISCLA", "ISCAN"],
@@ -179,19 +179,19 @@ def build_ptbxl_subtask_labels(min_cnt: int = MIN_CNT):
                   "VCLVH", "RVH", "SEHYP", "LAO/LAE", "RAO/RAE", "HVOLT",
                   "LVOLT", "LAD", "RAD", "LNGQT"]
 
-    # 서브태스크별 라벨 생성
+    # subtask per label generate
     tasks = {}
 
-    # 1. all — 전체 SNOMED 라벨
+    # 1. all — all SNOMED label
     tasks["ptbxl_all"] = (df_all.copy(), all_cols)
 
-    # 2. super — 5 superclass (약어 코드 직접 매칭)
+    # 2. super — 5 superclass (abbreviation code directly matching)
     super_cols = list(SUPERCLASS_CODE_MAP.keys())
     df_super = df_all[["filepath"]].copy()
     for sclass, codes in SUPERCLASS_CODE_MAP.items():
         matching = [c for c in codes if c in all_cols]
         df_super[sclass] = df_all[matching].any(axis=1) if matching else False
-    # NORM 보정: SR이 있되 MI/STTC/CD/HYP 어느 것도 없는 경우만 Normal
+    # NORM : SR  MI/STTC/CD/HYP   no  only Normal
     pathology_cols = []
     for s in ["MI", "STTC", "CD", "HYP"]:
         pathology_cols.extend([c for c in SUPERCLASS_CODE_MAP[s] if c in all_cols])
@@ -199,35 +199,35 @@ def build_ptbxl_subtask_labels(min_cnt: int = MIN_CNT):
     df_super["NORM"] = df_super["NORM"] & ~has_pathology
     tasks["ptbxl_super"] = (df_super, super_cols)
 
-    # 3. rhythm — 리듬 관련 라벨만
+    # 3. rhythm —   label only
     rhythm_cols = [c for c in RHYTHM_CODES if c in all_cols]
     if rhythm_cols:
         tasks["ptbxl_rhythm"] = (df_all[["filepath"] + rhythm_cols].copy(), rhythm_cols)
 
-    # 4. form — 형태 관련 라벨만
+    # 4. form —   label only
     form_cols = [c for c in FORM_CODES if c in all_cols]
     if form_cols:
         tasks["ptbxl_form"] = (df_all[["filepath"] + form_cols].copy(), form_cols)
 
-    # 5. diag — 진단 라벨 (rhythm/form 제외)
+    # 5. diag — diagnosis label (rhythm/form exclude)
     diag_cols = [c for c in all_cols if c not in rhythm_cols and c not in form_cols]
     if diag_cols:
         tasks["ptbxl_diag"] = (df_all[["filepath"] + diag_cols].copy(), diag_cols)
 
-    # 6. sub — diag의 서브클래스 (diag와 동일하게 사용)
+    # 6. sub — diag's class (diag and identically use)
     tasks["ptbxl_sub"] = tasks.get("ptbxl_diag", (df_all[["filepath"]].copy(), []))
 
     return tasks
 
 
 # ═══════════════════════════════════════════════════════════════
-# 메인
+# main
 # ═══════════════════════════════════════════════════════════════
 def main():
-    parser = argparse.ArgumentParser(description="벤치마크 라벨 생성")
+    parser = argparse.ArgumentParser(description="benchmark label generate")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--dataset", type=str, default=None,
-                        help="특정 데이터셋 (chapman, ptbxl, etc)")
+                        help="specific dataset(s) (chapman, ptbxl, etc)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -253,7 +253,7 @@ def main():
             df, label_cols, lbl_itos = build_snomed_labels(ds, min_cnt=MIN_CNT)
             csv_path = out_dir / f"{ds}_bench_labels.csv"
             df.to_csv(csv_path, index=False)
-            logging.info(f"  저장: {csv_path.name} ({len(df):,}행, {len(label_cols)} 라벨)")
+            logging.info(f"  save: {csv_path.name} ({len(df):,}rows, {len(label_cols)} label)")
 
             # lbl_itos JSON
             json_path = out_dir / f"{ds}_bench_labels.json"
@@ -261,21 +261,21 @@ def main():
                 json.dump({"dataset": ds, "n_labels": len(label_cols),
                            "labels": lbl_itos}, f, indent=2, ensure_ascii=False)
 
-            # PTB-XL 서브태스크
+            # PTB-XL subtask
             if ds == "ptbxl":
-                logging.info("  PTB-XL 서브태스크 생성...")
+                logging.info("  PTB-XL subtask generate...")
                 ptbxl_tasks = build_ptbxl_subtask_labels(min_cnt=MIN_CNT)
                 for task_name, (task_df, task_cols) in ptbxl_tasks.items():
                     csv_p = out_dir / f"{task_name}_bench_labels.csv"
                     task_df.to_csv(csv_p, index=False)
-                    logging.info(f"    {task_name}: {csv_p.name} ({len(task_df):,}행, {len(task_cols)} 라벨)")
+                    logging.info(f"    {task_name}: {csv_p.name} ({len(task_df):,}rows, {len(task_cols)} label)")
                     json_p = out_dir / f"{task_name}_bench_labels.json"
                     with open(json_p, "w") as f:
                         json.dump({"dataset": task_name, "n_labels": len(task_cols),
                                    "labels": task_cols}, f, indent=2, ensure_ascii=False)
 
         elif ds == "zzu":
-            # 기존 라벨 CSV 복사
+            # existing label CSV 
             src = H5_ROOT / "ZZU-pECG/v2.0/zzu_labels.csv"
             if src.exists():
                 import shutil
@@ -284,7 +284,7 @@ def main():
                 df = pd.read_csv(dst, nrows=0)
                 key = {"filepath","dataset","pid","rid","oid"}
                 n = len([c for c in df.columns if c not in key])
-                logging.info(f"  저장: {dst.name} ({n} 라벨)")
+                logging.info(f"  save: {dst.name} ({n} label)")
 
         elif ds == "code15":
             src = H5_ROOT / "code15/v2.0/code15_labels.csv"
@@ -292,7 +292,7 @@ def main():
                 import shutil
                 dst = out_dir / "code15_bench_labels.csv"
                 shutil.copy(src, dst)
-                logging.info(f"  저장: {dst.name} (6 라벨)")
+                logging.info(f"  save: {dst.name} (6 label)")
 
         elif ds == "cpsc2021":
             src = H5_ROOT / "cpsc2021/v2.0/cpsc2021_labels.csv"
@@ -300,18 +300,18 @@ def main():
                 import shutil
                 dst = out_dir / "cpsc2021_bench_labels.csv"
                 shutil.copy(src, dst)
-                logging.info(f"  저장: {dst.name} (3 라벨)")
+                logging.info(f"  save: {dst.name} (3 label)")
 
         elif ds == "sph":
-            # SPH: convert_h5의 sph_labels.csv를 그대로 paper/bench 양쪽에 복사.
-            # convert_h5/append_labels.py의 map_sph가 ecg-fm-benchmarking
-            # map_and_filter_labels(min_cnt=10)와 동일한 35개 primary AHA 코드를 사용.
+            # SPH: convert_h5's sph_labels.csv as-is paper/bench  in .
+            # convert_h5/append_labels.py's map_sph ecg-fm-benchmarking
+            # map_and_filter_labels(min_cnt=10) identical 35 primary AHA code use.
             src = H5_ROOT / "sph/v2.0/sph_labels.csv"
             if src.exists():
                 df = pd.read_csv(src, low_memory=False)
                 key = {"filepath","dataset","pid","rid","oid"}
                 label_cols = [c for c in df.columns if c not in key]
-                # 벤치마크 로더는 filepath + 라벨 컬럼만 요구
+                # benchmark  filepath + label column only 
                 paper_df = df[["filepath"] + label_cols]
                 for suffix in ("paper", "bench"):
                     dst = out_dir / f"sph_{suffix}_labels.csv"
@@ -320,11 +320,11 @@ def main():
                     with open(json_p, "w") as f:
                         json.dump({"dataset": "sph", "n_labels": len(label_cols),
                                    "labels": label_cols}, f, indent=2, ensure_ascii=False)
-                    logging.info(f"  저장: {dst.name} ({len(paper_df):,}행, {len(label_cols)} 라벨)")
+                    logging.info(f"  save: {dst.name} ({len(paper_df):,}rows, {len(label_cols)} label)")
             else:
-                logging.error(f"  원본 라벨 없음: {src} (먼저 append_labels.py --dataset sph)")
+                logging.error(f"  original label none: {src} (first, append_labels.py --dataset sph)")
 
-    logging.info(f"\n완료! 라벨 디렉토리: {out_dir}")
+    logging.info(f"\ndone! label directory: {out_dir}")
 
 
 if __name__ == "__main__":

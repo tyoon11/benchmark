@@ -1,24 +1,24 @@
 """
-논문 동일 라벨 생성 스크립트
+Paper-canonical label build script
 ==============================
-ecg-fm-benchmarking의 prepare_data_*() 함수를 그대로 재현합니다.
+Faithfully reproduces ecg-fm-benchmarking's prepare_data_*() functions.
 
 - physionet (ningbo/cpsc2018/cpsc_extra/georgia/ptb/chapman/stpetersburg):
-    WFDB .hea의 # Dx: SNOMED → Label Mappings xlsx → 진단명 (label 리스트)
+    WFDB .hea's # Dx: SNOMED → Label Mappings xlsx → diagnosis (label list)
 - PTB-XL:
-    ptbxl_database.csv + scp_statements.csv → 6 서브태스크
+    ptbxl_database.csv + scp_statements.csv → 6 subtask
     (label_all, label_diag, label_form, label_rhythm,
      label_diag_subclass, label_diag_superclass)
 - ZZU:
-    AttributesDictionary.csv의 AHA_code/CHN_code (원본 동일)
+    AttributesDictionary.csv's AHA_code/CHN_code (original identical)
 
-모든 라벨은 min_cnt=10으로 필터링 (논문 동일).
+all label min_cnt=10 as filtering (paper identical).
 
-출력:
-  labels/{dataset}_paper_labels.csv  (key 컬럼 + binary 라벨)
-  labels/{dataset}_paper_labels.json (라벨명 정의)
+output:
+  labels/{dataset}_paper_labels.csv  (key column + binary label)
+  labels/{dataset}_paper_labels.json (label name definitions)
 
-실행:
+run:
   python scripts/build_labels_paper.py --all
   python scripts/build_labels_paper.py --dataset ptbxl
 """
@@ -36,46 +36,46 @@ from pathlib import Path
 from collections import Counter
 
 # ═══════════════════════════════════════════════════════════════
-# 경로
+# path
 # ═══════════════════════════════════════════════════════════════
-H5_ROOT = Path("/home/irteam/ddn-opendata1/h5")
-RAW_ROOT = Path("/home/irteam/ddn-opendata1/raw/physionet.org/files")
+H5_ROOT = Path("/path/to/ecg_data/h5")
+RAW_ROOT = Path("/path/to/ecg_data/raw/physionet.org/files")
 CHALLENGE_BASE = RAW_ROOT / "challenge-2021/1.0.3/training"
-LABEL_XLSX = Path("/home/irteam/local-node-d/tykim/ecg-fm-benchmarking/Label mappings 2021.xlsx")
-PTBXL_META = Path("/home/irteam/ddn-opendata1/raw/ptbxl_metadata")
-BENCHMARK_DIR = Path("/home/irteam/local-node-d/tykim/benchmark")
+LABEL_XLSX = Path("/path/to/workspace/ecg-fm-benchmarking/Label mappings 2021.xlsx")
+PTBXL_META = Path("/path/to/ecg_data/raw/ptbxl_metadata")
+BENCHMARK_DIR = Path("/path/to/workspace/benchmark")
 OUT_DIR = BENCHMARK_DIR / "labels"
 
-MIN_CNT = 10  # 논문 동일
+MIN_CNT = 10  # paper identical
 
 
 # ═══════════════════════════════════════════════════════════════
-# map_and_filter_labels — 논문 그대로 재현
+# map_and_filter_labels — paper as-is reproduction
 # ═══════════════════════════════════════════════════════════════
 def map_and_filter_labels(df, min_cnt, lbl_cols):
     """
-    원본 ecg_utils.map_and_filter_labels() 재현.
+    original ecg_utils.map_and_filter_labels() reproduction.
 
-    각 lbl_col에 대해:
-      1. 모든 라벨 카운트
-      2. min_cnt 이상인 라벨만 남기고 {col}_filtered 컬럼 생성
-      3. {col}_filtered를 numeric으로 인코딩한 {col}_filtered_numeric 컬럼 생성
+    each lbl_col in for:
+      1. all label 
+      2. min_cnt or moreis label only  {col}_filtered column generate
+      3. {col}_filtered numeric as is {col}_filtered_numeric column generate
 
     Returns:
-        df:        확장된 DataFrame
-        lbl_itos:  {col_filtered: [label1, label2, ...]} — 라벨 순서
+        df:        extensioned DataFrame
+        lbl_itos:  {col_filtered: [label1, label2, ...]} — label order
     """
     lbl_itos = {}
     for col in lbl_cols:
-        # 전체 라벨 flatten
+        # all label flatten
         all_labels = [item for sublist in df[col] for item in sublist]
         unique, cnt = np.unique(all_labels, return_counts=True)
         selected = set(unique[cnt >= min_cnt])
 
-        # filtered 컬럼
+        # filtered column
         df[col + "_filtered"] = df[col].apply(lambda x: [y for y in x if y in selected])
 
-        # numeric 매핑 (정렬된 순서)
+        # numeric mapping (sorted order)
         lbl_list = sorted(selected)
         lbl_itos[col + "_filtered"] = lbl_list
         lbl_stoi = {s: i for i, s in enumerate(lbl_list)}
@@ -86,7 +86,7 @@ def map_and_filter_labels(df, min_cnt, lbl_cols):
 
 
 # ═══════════════════════════════════════════════════════════════
-# PhysioNet SNOMED 데이터셋 (논문 prepare_data_*() 재현)
+# PhysioNet SNOMED dataset (paper prepare_data_*() reproduction)
 # ═══════════════════════════════════════════════════════════════
 SNOMED_DATASETS = {
     "chapman":      {"wfdb_dir": CHALLENGE_BASE / "chapman_shaoxing", "sheet": "Chapman"},
@@ -94,21 +94,21 @@ SNOMED_DATASETS = {
     "cpsc_extra":   {"wfdb_dir": CHALLENGE_BASE / "cpsc_2018_extra",  "sheet": "CPSC-Extra"},
     "georgia":      {"wfdb_dir": CHALLENGE_BASE / "georgia",          "sheet": "G12EC"},
     "ningbo":       {"wfdb_dir": CHALLENGE_BASE / "ningbo",           "sheet": "Ningbo",
-                     "extra_map": {"106068003": "ARH"}},  # 논문 ningbo prepare의 수동 추가
+                     "extra_map": {"106068003": "ARH"}},  # paper ningbo prepare's  add
     "ptb":          {"wfdb_dir": CHALLENGE_BASE / "ptb",              "sheet": "PTB"},
     "stpetersburg": {"wfdb_dir": CHALLENGE_BASE / "st_petersburg_incart", "sheet": "INCART"},
 }
 
 
 def load_snomed_mapping(sheet_name: str, extra_map: dict = None) -> dict:
-    """Label Mappings xlsx 로드."""
+    """Label Mappings xlsx load."""
     df = pd.read_excel(LABEL_XLSX, sheet_name=sheet_name, dtype={"SNOMED code": str})
     df = df.dropna(subset=["SNOMED code"])
     mapping = {}
     for _, row in df.iterrows():
         code = str(row["SNOMED code"]).strip()
         diag = str(row["Diagnosis in the dataset"]).strip()
-        if code not in mapping:   # 논문의 경우 중복 시 첫 번째 유지
+        if code not in mapping:   # paper's   of at first keep
             mapping[code] = diag
     if extra_map:
         mapping.update(extra_map)
@@ -116,13 +116,13 @@ def load_snomed_mapping(sheet_name: str, extra_map: dict = None) -> dict:
 
 
 def parse_wfdb_dx(hea_path: str) -> list:
-    """WFDB .hea에서 # Dx: SNOMED 코드 리스트 파싱 (논문 동일)."""
+    """WFDB .hea from # Dx: SNOMED code list parsing (paper identical)."""
     try:
         rec = wfdb.rdheader(hea_path)
         for c in (rec.comments or []):
             cl = c.strip()
             if cl.lower().startswith("dx:"):
-                # 논문: codes = [str(int(x)) for x in arrs[1].split(',')]
+                # paper: codes = [str(int(x)) for x in arrs[1].split(',')]
                 codes = []
                 for x in cl.split(":", 1)[1].split(","):
                     x = x.strip()
@@ -138,11 +138,11 @@ def parse_wfdb_dx(hea_path: str) -> list:
 
 def build_snomed_dataset(dataset_name: str):
     """
-    논문 prepare_data_ningbo/cpsc2018/chapman 등 재현.
+    paper prepare_data_ningbo/cpsc2018/chapman etc. reproduction.
 
     - df["label"] = [SNOMED diagnosis names (from xlsx mapping)]
     - map_and_filter_labels(min_cnt=10)
-    - df["label_filtered"], df["label_filtered_numeric"] 생성
+    - df["label_filtered"], df["label_filtered_numeric"] generate
     """
     cfg = SNOMED_DATASETS[dataset_name]
     wfdb_dir = cfg["wfdb_dir"]
@@ -150,7 +150,7 @@ def build_snomed_dataset(dataset_name: str):
 
     logging.info(f"  SNOMED mapping: {len(snomed_map)} entries ({cfg['sheet']})")
 
-    # file_name.csv로 h5 filepath 매핑
+    # file_name.csv by h5 filepath mapping
     fn_csv = H5_ROOT / "physionet/v2.0/file_name.csv"
     fn_df = pd.read_csv(fn_csv)
     fn_df = fn_df[fn_df["dataset"] == dataset_name]
@@ -164,7 +164,7 @@ def build_snomed_dataset(dataset_name: str):
     for hea in hea_files:
         rec_name = os.path.basename(hea).replace(".hea", "")
         codes = parse_wfdb_dx(hea[:-4])
-        # 논문: labels = [dx_mapping_snomed[code] for code in codes] (매핑 실패는 스킵)
+        # paper: labels = [dx_mapping_snomed[code] for code in codes] (mapping failure skip)
         labels = [snomed_map[c] for c in codes if c in snomed_map]
         h5_fp = orig_to_h5fp.get(rec_name)
         if h5_fp:
@@ -173,7 +173,7 @@ def build_snomed_dataset(dataset_name: str):
     logging.info(f"  Mapped records: {len(records)}")
     df = pd.DataFrame(records)
 
-    # 논문 동일: map_and_filter_labels
+    # paper identical: map_and_filter_labels
     df, lbl_itos = map_and_filter_labels(df, min_cnt=MIN_CNT, lbl_cols=["label"])
     labels_itos = lbl_itos["label_filtered"]
     logging.info(f"  Labels (≥{MIN_CNT}): {len(labels_itos)}")
@@ -182,17 +182,17 @@ def build_snomed_dataset(dataset_name: str):
 
 
 # ═══════════════════════════════════════════════════════════════
-# PTB-XL — 논문 prepare_data_ptb_xl() 재현
+# PTB-XL — paper prepare_data_ptb_xl() reproduction
 # ═══════════════════════════════════════════════════════════════
 def build_ptbxl_dataset():
     """
-    논문 prepare_data_ptb_xl() 그대로 재현.
+    paper prepare_data_ptb_xl() as-is reproduction.
 
-    서브태스크:
-      - label_all         (모든 SCP 코드)
-      - label_diag        (scp_statements의 diagnostic>0)
-      - label_form        (scp_statements의 form>0)
-      - label_rhythm      (scp_statements의 rhythm>0)
+    subtask:
+      - label_all         (all SCP code)
+      - label_diag        (scp_statements's diagnostic>0)
+      - label_form        (scp_statements's form>0)
+      - label_rhythm      (scp_statements's rhythm>0)
       - label_diag_subclass    (diag → diagnostic_subclass)
       - label_diag_superclass  (diag → diagnostic_class)
     """
@@ -202,13 +202,13 @@ def build_ptbxl_dataset():
     scp_path = PTBXL_META / "scp_statements.csv"
 
     df = pd.read_csv(ptbxl_db_path, index_col="ecg_id")
-    # scp_codes는 dict 문자열
+    # scp_codes dict string
     df["scp_codes"] = df["scp_codes"].apply(lambda x: eval(x.replace("nan", "np.nan")))
 
     scp = pd.read_csv(scp_path)
     scp = scp.set_index(scp.columns[0])
 
-    # 논문 동일
+    # paper identical
     diag_codes = scp[scp["diagnostic"] > 0]
     form_codes = scp[scp["form"] > 0]
     rhythm_codes = scp[scp["rhythm"] > 0]
@@ -228,23 +228,23 @@ def build_ptbxl_dataset():
     df["label_diag_subclass"]   = df["label_diag"].apply(lambda x: [diag_subclass_map[y] for y in x if y in diag_subclass_map])
     df["label_diag_superclass"] = df["label_diag"].apply(lambda x: [diag_class_map[y] for y in x if y in diag_class_map])
 
-    # 논문 min_cnt=10 필터링
+    # paper min_cnt=10 filtering
     df, lbl_itos = map_and_filter_labels(
         df, min_cnt=MIN_CNT,
         lbl_cols=["label_all", "label_diag", "label_form", "label_rhythm",
                   "label_diag_subclass", "label_diag_superclass"],
     )
 
-    # 원본 strat_fold도 가져옴
-    # ptbxl_database의 filename_hr: records500/00000/00001_hr
-    # H5의 original_filename: HR00001  (convert_to_h5.py 처리 결과)
+    # original strat_fold also 
+    # ptbxl_database's filename_hr: records500/00000/00001_hr
+    # H5's original_filename: HR00001  (convert_to_h5.py handling results)
     fn_csv = H5_ROOT / "physionet/v2.0/file_name.csv"
     fn_df = pd.read_csv(fn_csv)
     fn_df = fn_df[fn_df["dataset"] == "ptbxl"]
     orig_to_h5fp = dict(zip(fn_df["original_filename"].astype(str),
                             fn_df["h5_filepath"].astype(str)))
 
-    # ecg_id → HR{padded} 매핑
+    # ecg_id → HR{padded} mapping
     def ecg_id_to_hr(ecg_id):
         return f"HR{int(ecg_id):05d}"
 
@@ -256,22 +256,22 @@ def build_ptbxl_dataset():
 
 
 # ═══════════════════════════════════════════════════════════════
-# ZZU — 원본 prepare_data_zzu_pecg() 재현 (AHA/CHN/ICD-10 description 매핑)
+# ZZU — original prepare_data_zzu_pecg() reproduction (AHA/CHN/ICD-10 description mapping)
 # ═══════════════════════════════════════════════════════════════
 ZZU_LABEL_COLS = ["icd10_disease_category", "aha_description", "chn_description"]
 
 
 def build_zzu_dataset():
     """
-    원본 ecg_utils.prepare_data_zzu_pecg() 재현.
+    original ecg_utils.prepare_data_zzu_pecg() reproduction.
 
-    - AttributesDictionary.csv: 샘플 메타(Patient_ID, Lead, AHA_code, CHN_code, ICD-10)
+    - AttributesDictionary.csv: samples metadata(Patient_ID, Lead, AHA_code, CHN_code, ICD-10)
     - DiseaseCode.csv:          ICD-10 → (disease type, disease category)
     - ECGCode.csv:              AHA/CHN code → description
 
-    Lead==12 필터, 세 라벨 컬럼 모두 map_and_filter_labels(min_cnt=10) 적용.
+    Lead==12 filter,  label column all map_and_filter_labels(min_cnt=10) apply.
     """
-    raw_root = Path("/home/irteam/ddn-opendata1/raw/ZZU-pECG")
+    raw_root = Path("/path/to/ecg_data/raw/ZZU-pECG")
     df = pd.read_csv(raw_root / "AttributesDictionary.csv")
     df_disease = pd.read_csv(raw_root / "DiseaseCode.csv")
     df_ecg = pd.read_csv(raw_root / "ECGCode.csv")
@@ -280,7 +280,7 @@ def build_zzu_dataset():
     df_disease.columns = df_disease.columns.str.lower()
     df_ecg.columns = df_ecg.columns.str.lower()
 
-    # code list 파싱 (원본 동일)
+    # code list parsing (original identical)
     for col in ["aha_code", "chn_code", "icd-10 code"]:
         df[col] = df[col].apply(
             lambda x: [] if pd.isna(x) or x == "Null"
@@ -303,7 +303,7 @@ def build_zzu_dataset():
         lambda codes: [cat_map[c] for c in codes if c in cat_map]
     )
 
-    # AHA/CHN code → description (원본: ECGCode.csv)
+    # AHA/CHN code → description (original: ECGCode.csv)
     aha_map, chn_map = {}, {}
     for _, row in df_ecg.iterrows():
         desc = str(row["description"]).strip()
@@ -321,12 +321,12 @@ def build_zzu_dataset():
         lambda codes: [chn_map[c] for c in codes if c in chn_map]
     )
 
-    # Lead==12 필터 (원본 동일)
+    # Lead==12 filter (original identical)
     n_all = len(df)
     df = df[df["lead"] == 12].copy()
-    logging.info(f"  ZZU 12-lead 필터: {len(df)}/{n_all}")
+    logging.info(f"  ZZU 12-lead filter: {len(df)}/{n_all}")
 
-    # H5 filepath 매핑
+    # H5 filepath mapping
     fn_csv = H5_ROOT / "ZZU-pECG/v2.0/file_name.csv"
     fn_df = pd.read_csv(fn_csv)
     orig_to_h5 = dict(zip(fn_df["original_filename"].astype(str),
@@ -336,9 +336,9 @@ def build_zzu_dataset():
         lambda x: orig_to_h5.get(str(x).split("/")[-1], None)
     )
     df = df[df["filepath"].notna()].copy()
-    logging.info(f"  ZZU H5 매핑 후: {len(df)}")
+    logging.info(f"  ZZU after H5 mapping: {len(df)}")
 
-    # 세 라벨 컬럼 모두 필터링 (원본 동일)
+    #  label column all filtering (original identical)
     df, lbl_itos = map_and_filter_labels(df, min_cnt=MIN_CNT, lbl_cols=ZZU_LABEL_COLS)
     for col in ZZU_LABEL_COLS:
         logging.info(f"  {col}: {len(lbl_itos[col + '_filtered'])} labels (≥{MIN_CNT})")
@@ -347,8 +347,8 @@ def build_zzu_dataset():
 
 def save_zzu_subtasks(df, lbl_itos):
     """
-    ZZU 3개 서브태스크 저장.
-      - zzu_paper_labels.csv              (aha_description, 기본 — yaml과 일치)
+    ZZU 3 subtask save.
+      - zzu_paper_labels.csv              (aha_description, default — yaml and match)
       - zzu_icd10_paper_labels.csv        (icd10_disease_category)
       - zzu_chn_paper_labels.csv          (chn_description)
     """
@@ -391,10 +391,10 @@ def save_zzu_subtasks(df, lbl_itos):
 
 
 # ═══════════════════════════════════════════════════════════════
-# CODE-15% — 원본 CSV 유지 (이미 논문과 동일)
+# CODE-15% — original CSV keep (already paper and identical)
 # ═══════════════════════════════════════════════════════════════
 def copy_code15_labels():
-    """code15는 변경 없이 기존 라벨 CSV 복사"""
+    """code15 change without existing label CSV """
     import shutil
     src = OUT_DIR / "code15_bench_labels.csv"
     dst = OUT_DIR / "code15_paper_labels.csv"
@@ -406,18 +406,18 @@ def copy_code15_labels():
 
 
 # ═══════════════════════════════════════════════════════════════
-# DataFrame → labels CSV 변환
+# DataFrame → labels CSV convert
 # ═══════════════════════════════════════════════════════════════
 def save_label_csv(dataset: str, df: pd.DataFrame, labels_itos, suffix=""):
     """
-    df['label_filtered_numeric'] 리스트를 binary 컬럼으로 확장하여 CSV 저장.
+    df['label_filtered_numeric'] list binary column as extension CSV save.
 
-    Returns: 저장 경로
+    Returns: save path
     """
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_csv = OUT_DIR / f"{dataset}{suffix}_paper_labels.csv"
 
-    # label 컬럼명 sanitize
+    # label column name sanitize
     label_cols = []
     for lbl in labels_itos:
         col = str(lbl).replace(" ", "_").replace(",", "").replace("-", "_") \
@@ -425,7 +425,7 @@ def save_label_csv(dataset: str, df: pd.DataFrame, labels_itos, suffix=""):
                       .replace("/", "_")
         label_cols.append(col)
 
-    # binary 컬럼 만들기
+    # binary column  only
     out_df = df[["filepath"]].copy()
     for j, col in enumerate(label_cols):
         out_df[col] = df["label_filtered_numeric" if "label_filtered_numeric" in df.columns else f"label_filtered_numeric"].apply(
@@ -433,7 +433,7 @@ def save_label_csv(dataset: str, df: pd.DataFrame, labels_itos, suffix=""):
         )
     out_df.to_csv(out_csv, index=False)
 
-    # JSON 라벨 정의 저장
+    # JSON label definition save
     out_json = OUT_DIR / f"{dataset}{suffix}_paper_labels.json"
     with open(out_json, "w") as f:
         json.dump({
@@ -447,12 +447,12 @@ def save_label_csv(dataset: str, df: pd.DataFrame, labels_itos, suffix=""):
 
 
 def save_ptbxl_subtasks(df, lbl_itos):
-    """PTB-XL 6개 서브태스크 각각 저장"""
+    """PTB-XL 6 subtask each save"""
     for task in ["label_all", "label_diag", "label_form", "label_rhythm",
                  "label_diag_subclass", "label_diag_superclass"]:
         labels_list = lbl_itos[task + "_filtered"]
 
-        # task별로 label_filtered_numeric 컬럼을 binary로
+        # task per by label_filtered_numeric column binary by
         label_cols = []
         for lbl in labels_list:
             col = str(lbl).replace(" ", "_").replace(",", "").replace("-", "_") \
@@ -465,7 +465,7 @@ def save_ptbxl_subtasks(df, lbl_itos):
         for j, col in enumerate(label_cols):
             out_df[col] = df[numeric_col].apply(lambda x: j in x if isinstance(x, list) else False)
 
-        # 태스크 이름 매핑
+        # task name mapping
         task_suffix = task.replace("label_diag_superclass", "ptbxl_super") \
                           .replace("label_diag_subclass", "ptbxl_sub") \
                           .replace("label_rhythm", "ptbxl_rhythm") \
@@ -488,7 +488,7 @@ def save_ptbxl_subtasks(df, lbl_itos):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 메인
+# main
 # ═══════════════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser()
@@ -525,7 +525,7 @@ def main():
         elif ds == "code15":
             copy_code15_labels()
 
-    logging.info("\n완료!")
+    logging.info("\ndone!")
 
 
 if __name__ == "__main__":

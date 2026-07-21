@@ -1,5 +1,5 @@
 # MIMIC-IV-ECG Clinical deterioration (multi-label binary with NaN, 6 outputs)
-# 원본 paper Table: 5,577 samples × 6 outputs
+# original paper Table: 5,577 samples × 6 outputs
 # Source: mds_ed.csv (multimodal-emergency-benchmark)
 data:
   batch_size: 64

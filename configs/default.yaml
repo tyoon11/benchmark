@@ -1,4 +1,4 @@
-# 기본 학습 설정 (ecg-fm-benchmarking 원본 동일)
+# Default training config (matches the original ecg-fm-benchmarking)
 train:
   epochs: 100
   lr: 1e-3
@@ -9,22 +9,22 @@ train:
   discriminative_lr_factor: 0.1
   device: cuda
 
-# 기본 eval_mode
+# default eval_mode
 # linear_probe | attention_probe | finetune_linear | finetune_attention
 eval_mode: linear_probe
 
-# Head 설정
+# Head config
 head:
   dropout: 0.0
-  num_heads: 16    # attention head용 (paper: heads=16)
-  hidden_dim: 256  # mlp head용
+  num_heads: 16    # attention head (for) (paper: heads=16)
+  hidden_dim: 256  # mlp head (for)
 
-# Fold split (ecg-fm-benchmarking 동일 방식)
-# strat_fold 컬럼이 table CSV에 있으면 자동 사용
+# Fold split (ecg-fm-benchmarking identical )
+# strat_fold column table CSV in if present, automatic use
 # train = fold < max-1, val = max-1, test = max
 fold:
-  col: strat_fold        # fold 컬럼명
-  auto_split: true       # true면 max_fold 기반 자동 split
+  col: strat_fold        # fold column name
+  auto_split: true       # true then max_fold based automatic split
 
-# 저장
+# save
 save_dir: null  # null → ./results/{task_name}_{eval_mode}_{timestamp}

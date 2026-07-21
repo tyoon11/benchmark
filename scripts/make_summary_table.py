@@ -70,7 +70,7 @@ TASK_CATEGORY = {
 MODEL_ORDER = [
     "ecg_founder", "ecg_jepa", "st_mem", "merl",
     "ecgfm_ked", "hubert_ecg", "ecg_fm", "cpc",
-    "moryecg_cb1024",
+    "moryecg_cb1024", "moryecg_a5",
 ]
 MODEL_DISPLAY = {
     "ecg_founder":    "ECGFounder",
@@ -82,6 +82,7 @@ MODEL_DISPLAY = {
     "ecg_fm":         "ECG-FM",
     "cpc":            "ECG-CPC",
     "moryecg_cb1024": "MoRyECG",
+    "moryecg_a5":     "MoRyECG-A5",
 }
 
 CATEGORY_ORDER = [

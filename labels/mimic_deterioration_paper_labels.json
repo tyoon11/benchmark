@@ -1,6 +1,6 @@
 {
   "dataset": "mimic_deterioration",
-  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv 의 6 deterioration columns (severe_hypoxemia, ecmo, vasopressors, inotropes, mechanical_ventilation, cardiac_arrest), 원본 mimic_preprocessing.py:67-84 재현.",
+  "source": "multimodal-emergency-benchmark/1.0.0/mds_ed.csv of 6 deterioration columns (severe_hypoxemia, ecmo, vasopressors, inotropes, mechanical_ventilation, cardiac_arrest), original mimic_preprocessing.py:67-84 reproduction.",
   "task_type": "multi-label-binary",
   "n_labels": 6,
   "labels": {

@@ -1,7 +1,7 @@
 # MIMIC-IV-ECG Vital signs (regression, 6 outputs)
-# 원본 paper Table: 131,602 samples × 6 outputs
-# Sources: vitalsign.csv.gz + chartevents.csv.gz 보강
-# Window: ECG-time 기준 closest 1시간 매칭
+# original paper Table: 131,602 samples × 6 outputs
+# Sources: vitalsign.csv.gz + chartevents.csv.gz enrich
+# Window: ECG-time (closest within ±1 h)
 data:
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/mimic4/v2.0
