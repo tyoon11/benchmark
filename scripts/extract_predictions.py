@@ -35,12 +35,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.dataset import H5ECGDataset
-from src.dataset_numpy import EchoNextDataset
+from src.dataset import build_dataset
+from src.dataset_numpy import build_echonext_dataset
 from src.wrapper import DownstreamWrapper
 
 # run.py re-use
-from run import load_config, load_encoder
+from run import encoder_contract, load_config, load_encoder
 
 # ──────────────────────────────────────────────────────────────────
 # Model registry (configs/models.sh of bash assoc array mirror)
@@ -60,6 +60,7 @@ MODEL_CLS_MAP = {
     "cpc":            "src.encoders.cpc.CPCEncoder",
     "moryecg_cb1024": "src.encoders.moryecg.MoRyECGEncoder",
     "moryecg_a5":     "src.encoders.moryecg_a5.MoRyECGA5Encoder",
+    "moryecg_a5_rvqgnn": "src.encoders.moryecg_a5_rvqgnn.MoRyECGA5RVQGNNEncoder",
 }
 MODEL_CKPT_MAP = {
     "ecg_founder":    f"{ECG_CKPT_ROOT}/ecg_founder/12_lead_ECGFounder.pth",
@@ -78,6 +79,12 @@ MODEL_CKPT_MAP = {
     "moryecg_a5":     os.environ.get(
         "MORYECG_A5_CKPT",
         f"{MORYECG_REPO}/checkpoints/pretrain_axial_s4_a5_heedb_full_cb1024/_run1_archive_20260608/best.pt",
+    ),
+    # RVQ-A5: heads were trained with the current best.pt (epoch 30); it has not
+    # been overwritten, so point straight at it for feature-consistent extraction.
+    "moryecg_a5_rvqgnn": os.environ.get(
+        "MORYECG_A5_RVQGNN_CKPT",
+        f"{MORYECG_REPO}/checkpoints/pretrain_axial_s4_a5_rvqgnn_patch100/best.pt",
     ),
 }
 
@@ -153,53 +160,17 @@ def build_test_loader(cfg):
         cols = data_cfg.get("label_cols")
         if cols and all(c in train_rows.columns for c in cols):
             data_cfg["target_mean"] = train_rows[cols].mean(axis=0).values.astype("float32").tolist()
-            data_cfg["target_std"]  = train_rows[cols].std(axis=0).values.astype("float32").tolist()
+            data_cfg["target_std"]  = train_rows[cols].std(axis=0, ddof=0).values.astype("float32").tolist()  # ddof=0 matches run.py / StandardScaler
 
     loader_type = data_cfg.get("loader_type", "h5")
     if loader_type == "echonext_numpy":
         if "test" not in data_cfg.get("waveforms", {}):
             return None, None, None
-        ds = EchoNextDataset(
-            waveform_npy=data_cfg["waveforms"]["test"],
-            metadata_csv=data_cfg["metadata_csv"],
-            split="test",
-            split_col=data_cfg.get("split_col", "split"),
-            label_cols=data_cfg["label_cols"],
-            source_fs=int(data_cfg.get("source_fs", 250)),
-            target_fs=data_cfg.get("target_fs"),
-            target_length=data_cfg.get("target_length"),
-            chunk_length=data_cfg.get("chunk_length"),
-            random_crop=False,
-            normalize=bool(data_cfg.get("normalize", False)),
-            mean=data_cfg.get("mean"),
-            std=data_cfg.get("std"),
-            n_leads=int(data_cfg.get("n_leads", 12)),
-            layout=str(data_cfg.get("layout", "NHWC")),
-        )
+        ds = build_echonext_dataset(data_cfg, "test")
     else:
         if not data_cfg.get("test_folds"):
             return None, None, None
-        ds = H5ECGDataset(
-            h5_root=data_cfg["h5_root"],
-            table_csv=data_cfg["table_csv"],
-            label_csv=data_cfg.get("label_csv"),
-            label_cols=data_cfg.get("label_cols"),
-            target_fs=data_cfg.get("target_fs"),
-            target_length=data_cfg.get("target_length"),
-            chunk_length=data_cfg.get("chunk_length"),
-            random_crop=False,
-            seg_idx=data_cfg.get("seg_idx", None),
-            normalize=data_cfg.get("normalize", False),
-            fold_col=data_cfg.get("fold_col"),
-            fold_ids=data_cfg.get("test_folds"),
-            mean=data_cfg.get("mean"),
-            std=data_cfg.get("std"),
-            task_type=task_type,
-            cls_cols=data_cfg.get("cls_cols"),
-            reg_cols=data_cfg.get("reg_cols"),
-            target_mean=data_cfg.get("target_mean"),
-            target_std=data_cfg.get("target_std"),
-        )
+        ds = build_dataset(data_cfg, "test")
 
     nw = int(os.environ.get("NUM_WORKERS", data_cfg.get("num_workers", 4)))
     loader = DataLoader(
@@ -299,13 +270,13 @@ def process_result_dir(result_dir: Path, device: str = None, force: bool = False
 
     encoder, feature_dim = load_encoder(encoder_cls, encoder_ckpt)
 
-    # multi-window extension (encoder chunk_seconds then)
+    # Encoder contract -> data config (same wiring as run.py, so the windows,
+    # lead order and resampling here match the training run exactly).
     data_cfg = cfg.get("data", {})
-    chunk_seconds = getattr(encoder, "chunk_seconds", None)
-    if chunk_seconds is not None and data_cfg.get("target_fs"):
-        chunk_length = int(round(chunk_seconds * float(data_cfg["target_fs"])))
-        if chunk_length < int(data_cfg.get("target_length", 0)):
-            data_cfg["chunk_length"] = chunk_length
+    input_size, fs_model, lead_order = encoder_contract(encoder)
+    data_cfg["input_size"] = input_size
+    data_cfg["fs_model"] = fs_model
+    data_cfg.setdefault("lead_order", lead_order)
 
     model = DownstreamWrapper(
         encoder=encoder,
@@ -327,7 +298,8 @@ def process_result_dir(result_dir: Path, device: str = None, force: bool = False
         logger.warning(f"[SKIP] no test loader for task={task}")
         return False
     ds, loader, task_type = out
-    logger.info(f"  test_size={len(ds):,} | task_type={task_type} | chunk={data_cfg.get('chunk_length')}")
+    logger.info(f"  test_size={len(ds):,} | task_type={task_type} | "
+                f"window={input_size}s @ {fs_model}Hz | lead_order={data_cfg['lead_order']}")
 
     t0 = time.time()
     preds, targets, ids = run_inference(model, loader, dev, task_type)

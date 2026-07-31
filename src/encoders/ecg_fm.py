@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ._contract import ensure_length
+
 
 class ConvFeatureExtractor(nn.Module):
     """Wav2Vec2 style CNN feature extractor"""
@@ -164,15 +166,19 @@ class ECGFMEncoder(nn.Module):
     ECG-FM encoder wrapper for benchmark.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, T) at data target_fs → 2500 samples (5s @ 500Hz)
+      - x: (B, 12, T) from the dataset: 2500 samples (5s @ 500Hz)
       - sequence_features: (B, T', 768)
       - pooled_features: (B, 768) via GAP
     """
 
-    # Paper: input_size=5s, fs_model=500 → 2500 samples per window.
-    chunk_seconds = 5.0
+    # Encoder contract (original run.sh: --input-size 5 --fs-model 500).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 5.0          # seconds
     model_fs = 500
     model_seq_len = 2500
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 5.0       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -222,10 +228,9 @@ class ECGFMEncoder(nn.Module):
             print(f"  Unexpected: {len(unexpected)} keys ({unexpected[:3]}...)")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 2500 samples (5s @ 500Hz)"""
+        """x: (B, 12, T) from the dataset: 2500 samples (5s @ 500Hz)"""
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
         seq_feat = self.model(x)             # (B, T', 768)
         pooled = seq_feat.mean(dim=1)        # (B, 768)
         return seq_feat, pooled

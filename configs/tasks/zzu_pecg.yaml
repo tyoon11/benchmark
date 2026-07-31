@@ -1,13 +1,14 @@
 # zzu_pecg (58-class multi-label, paper AHA_description)
 data:
+  # original: df[df.data_length >= 5000] (main_lite_ecg.setup_dataset)
+  min_data_length: 5000
   batch_size: 64
   h5_root: ${ECG_DATA_ROOT}/h5/ZZU-pECG/v2.0
   label_csv: labels/zzu_paper_labels.csv
   normalize: false
   num_workers: 8
   table_csv: ${ECG_DATA_ROOT}/h5/ZZU-pECG/v2.0/ecg_table.csv
-  target_fs: 500
-  target_length: 5000
 task:
   name: zzu_pecg
   num_classes: 58
+  expected_num_classes: 58   # main_lite_ecg.py

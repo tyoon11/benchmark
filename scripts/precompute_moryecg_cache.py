@@ -116,23 +116,22 @@ def collect_task_segments(task_yaml: Path) -> list[tuple[Path, int]]:
         print(f"[skip] no 'filepath' col: {table_csv}", file=sys.stderr)
         return []
 
-    seg_idx_cfg = cfg.get("data", {}).get("seg_idx", None)
-    out: list[tuple[Path, int]] = []
-    for fp in df["filepath"].tolist():
-        full = h5_root / fp
-        if seg_idx_cfg == "all":
-            # Open H5 once to enumerate segments
-            try:
-                with h5py.File(full, "r") as f:
-                    n_seg = len(f["ECG/segments"]) if "ECG/segments" in f else 1
-                for s in range(n_seg):
-                    out.append((full, s))
-            except Exception:
-                out.append((full, 0))
-        else:
-            s = int(seg_idx_cfg) if seg_idx_cfg is not None else 0
-            out.append((full, s))
-    return out
+    # The dataset defaults to seg_mode="all" (every H5 segment of a record), so
+    # the cache must cover them all — 'seg_idx' no longer exists in task configs.
+    seg_mode = str(cfg.get("data", {}).get("seg_mode", "all")).lower()
+    filepaths = df["filepath"].tolist()
+    if seg_mode != "all":
+        return [(h5_root / fp, 0) for fp in filepaths]
+
+    # Reuse the shared record-length cache: it enumerates every segment with a
+    # thread pool and persists the result under labels/_cache/lengths, so this is
+    # a fast lookup after the first pass. Opening 345k H5 files serially here
+    # took hours.
+    from src.signal_utils import load_record_lengths
+
+    lengths = load_record_lengths(str(h5_root), str(table_csv), filepaths)
+    return [(h5_root / fp, int(seg))
+            for fp, seg in lengths[["filepath", "seg_idx"]].itertuples(index=False)]
 
 
 def init_worker(cache_root: str, repo_root: str, force: bool) -> None:
@@ -221,6 +220,18 @@ def main() -> int:
         return 2
     cache_root = Path(args.cache_root)
     cache_root.mkdir(parents=True, exist_ok=True)
+
+    # Stamp the window this cache is valid for. The cache key is only
+    # (filepath, seg_idx), so without this a cache built for a different
+    # window/lead order would look like a hit at training time.
+    import json
+
+    from src.dataset import CACHE_STAMP_FILE, cache_stamp
+    from src.encoders.moryecg import MoRyECGEncoder
+
+    stamp = cache_stamp(MODEL_FS, MoRyECGEncoder.lead_order, seg_mode="all")
+    (cache_root / CACHE_STAMP_FILE).write_text(json.dumps(stamp, indent=2))
+    print(f"[info] cache stamp  = {stamp}")
     print(f"[info] cache_root = {cache_root}")
     print(f"[info] preproc_version = {PREPROC_VERSION}  model_fs = {MODEL_FS}")
     print(f"[info] workers = {args.workers}")

@@ -11,8 +11,6 @@ data:
     - is_nonAF
     - is_persistentAF
     - is_paroxysmalAF
-  target_fs: 200
-  target_length: 2000  # 10s × 200Hz
   normalize: true
   batch_size: 64
   num_workers: 8

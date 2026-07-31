@@ -15,8 +15,6 @@ data:
     - is_SB
     - is_STach
     - is_AF
-  target_fs: 500       # 400→500 upsample
-  target_length: 2500  # 500Hz × 5s
   normalize: false
   batch_size: 128
   num_workers: 8

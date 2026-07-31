@@ -6,6 +6,7 @@ Model sampling frequency: 250 Hz
 Embedding dimension: 768
 """
 
+import os
 import sys
 import torch
 import torch.nn as nn
@@ -16,13 +17,15 @@ from pathlib import Path
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
 sys.path.insert(0, str(EXTERNAL_DIR))
 
+from ._contract import ensure_length
+
 
 class StMemEncoder(nn.Module):
     """
     ST-MEM encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, T) at data target_fs — resampled to 600 samples (2.4s @ 250Hz)
+      - x: (B, 12, T) from the dataset: 600 samples (2.4s @ 250Hz)
       - pooled_features: (B, 768)
 
     Note: before training checkpointis pos_embedding seq_len=2250 (30 patch + 2 SEP)
@@ -31,10 +34,14 @@ class StMemEncoder(nn.Module):
           required.
     """
 
-    # Paper: input_size=2.4s, fs_model=250 → 600 samples per window.
-    chunk_seconds = 2.4
+    # Encoder contract (original run.sh: --input-size 2.4 --fs-model 250).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 2.4          # seconds
     model_fs = 250
     model_seq_len = 600
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 2.4       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None, seq_len=2250, patch_size=75):
         super().__init__()
@@ -61,12 +68,11 @@ class StMemEncoder(nn.Module):
         print(f"[StMemEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 600 samples (2.4s @ 250Hz)"""
+        """x: (B, 12, T) from the dataset: 600 samples (2.4s @ 250Hz)"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
 
         enc = self.model.encoder
         num_leads = x.shape[1]
@@ -101,6 +107,27 @@ class StMemEncoder(nn.Module):
         return seq_feat, pooled
 
     def get_layer_groups(self):
+        """Discriminative-LR groups.
+
+        .. warning::
+           The original ``StMemWrapper.get_params`` iterates
+           ``self.model.encoder.named_parameters()`` but matches names prefixed
+           with ``"encoder."`` (``encoder.block0.``, ``encoder.pos_embedding``,
+           ...). Inside ``.encoder`` the names are already ``block0.`` etc., so
+           **no parameter ever matches** and both LR groups come back empty:
+           ST-MEM "finetuning_linear" in the published benchmark actually trains
+           the head only, with the backbone in train mode but never updated.
+
+           ``ECGFM_PAPER_QUIRKS=0`` disables the bug reproduction and trains the
+           full backbone (the intended behaviour); the default reproduces the
+           published setup so the numbers are comparable.
+        """
+        if os.environ.get("ECGFM_PAPER_QUIRKS", "1") == "1":
+            print("[StMemEncoder] paper-quirk: empty encoder LR groups "
+                  "(reproduces the original's no-op get_params; set "
+                  "ECGFM_PAPER_QUIRKS=0 to finetune the backbone)")
+            return {"early": [], "late": []}
+
         early, late = [], []
         for name, param in self.model.encoder.named_parameters():
             if any(name.startswith(p) for p in ["pos_embedding", "sep_embedding",

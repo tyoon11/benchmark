@@ -67,6 +67,37 @@ LEAD_II_INDEX = 1   # HEEDB lead order: I, II, III, V1..V6, aVF, aVL, aVR
 DEFAULT_MAX_BEATS = 30
 DEFAULT_RECORD_MAD_SCALE = 5.0
 
+# Token-aggregation for the pooled (linear_probe / finetune_linear) feature
+# vector. "mean" (the default) averages the content tokens (out[:, 1:]) the way
+# the mean-pooling baselines (ecg_founder, merl, st_mem, …) build their pooled
+# vector — so MoRyECG is compared on the same footing. "cls" uses the learned
+# [GLOB]/[CLS] token (out[:, 0]). Env override ($MORYECG_POOL_MODE) lets run
+# scripts flip the mode without editing configs.
+POOL_MODES = ("cls", "mean")
+
+
+def _resolve_pool_mode(explicit: Optional[str] = None) -> str:
+    """Pick pooling mode from an explicit arg, else $MORYECG_POOL_MODE, else 'mean'."""
+    mode = (explicit or os.environ.get("MORYECG_POOL_MODE") or "mean").lower()
+    if mode not in POOL_MODES:
+        raise ValueError(f"pool_mode must be one of {POOL_MODES}, got '{mode}'.")
+    return mode
+
+
+def pool_tokens(out: torch.Tensor, pool_mode: str) -> tuple:
+    """Split a (B, 1 + M, D) backbone output into (seq_feat, pooled).
+
+    seq_feat is always the content tokens out[:, 1:]. pooled is the [CLS]/[GLOB]
+    token out[:, 0] when pool_mode == "cls", or the mean over the content tokens
+    when pool_mode == "mean" (unmasked, matching the mean-pooling baselines).
+    """
+    seq_feat = out[:, 1:, :]
+    if pool_mode == "mean":
+        pooled = seq_feat.mean(dim=1)
+    else:
+        pooled = out[:, 0, :]
+    return seq_feat, pooled
+
 
 # ─── Locate the pretrain repo so we can reuse its model + preprocessing code ──
 def _resolve_repo_root(explicit: Optional[str] = None) -> Path:
@@ -289,7 +320,13 @@ class MoRyECGEncoder(nn.Module):
       feature_dim    : 512    — GLOB / CLS embedding size
     """
 
-    chunk_seconds = 10.0
+    # Encoder contract. MoRyECG was pre-trained on the HEEDB channel order
+    # (I,II,III,V1..V6,aVF,aVL,aVR) and its beat/STFT preprocessing cache is keyed
+    # to that layout, so this adapter asks the dataset for HEEDB order while the
+    # published baselines get the standard order. See src/leads.py.
+    input_size = 10.0          # seconds
+    lead_order = "heedb"
+    chunk_seconds = 10.0       # deprecated alias for input_size
     model_fs = MODEL_FS
     model_seq_len = MODEL_SEQ_LEN
     feature_dim = 512
@@ -300,9 +337,11 @@ class MoRyECGEncoder(nn.Module):
         tokenizer_ckpt: Optional[str] = None,
         repo_root: Optional[str] = None,
         cache_root: Optional[str] = None,
+        pool_mode: Optional[str] = None,
     ):
         super().__init__()
 
+        self.pool_mode = _resolve_pool_mode(pool_mode)
         repo = _resolve_repo_root(repo_root)
         mods = _import_pretrain_modules(repo)
         self._mods = mods
@@ -475,7 +514,7 @@ class MoRyECGEncoder(nn.Module):
         **_unused,
     ):
         """
-        x: (B, 12, T) raw ECG at task target_fs.
+        x: (B, 12, T) raw ECG at the encoder contract rate (input_size x model_fs).
 
         Three preprocessing paths (in priority order):
           1. cached_*       pre-loaded by DataLoader workers (parallel, fastest)
@@ -554,8 +593,7 @@ class MoRyECGEncoder(nn.Module):
                                           beat_valid_mask=beat_valid_mask)
         else:
             out = self.model(indices, rr, stft)
-        pooled = out[:, 0, :]
-        seq_feat = out[:, 1:, :]
+        seq_feat, pooled = pool_tokens(out, self.pool_mode)
         return seq_feat, pooled
 
     # ── layer-dependent LR groups (paper finetune contract) ─────────────────

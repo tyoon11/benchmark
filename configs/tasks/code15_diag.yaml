@@ -2,8 +2,11 @@
 task:
   name: code15_diag
   num_classes: 6
+  expected_num_classes: 6   # main_lite_ecg.py
 
 data:
+  # original: df[df.data_length >= 4000] (main_lite_ecg.setup_dataset)
+  min_data_length: 4000
   h5_root: ${ECG_DATA_ROOT}/h5/code15/v2.0
   table_csv: ${ECG_DATA_ROOT}/h5/code15/v2.0/code15_table.csv
   label_csv: ${ECG_DATA_ROOT}/h5/code15/v2.0/code15_labels.csv
@@ -14,8 +17,6 @@ data:
     - is_SB
     - is_STach
     - is_AF
-  target_fs: 400
-  target_length: 4096  # ~10s × 400Hz
   normalize: true
   batch_size: 128
   num_workers: 8

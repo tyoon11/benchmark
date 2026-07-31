@@ -61,6 +61,8 @@ def _stub_torch_load(path: str):
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
 sys.path.insert(0, str(EXTERNAL_DIR))
 
+from ._contract import ensure_length
+
 
 def _prepend_env_path(name: str, value: Path) -> None:
     if not value.exists():
@@ -138,14 +140,18 @@ class CPCEncoder(nn.Module):
     S4 predictor load in failurethen encoder-only by fallback.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
+      - x: (B, 12, T) from the dataset: 600 samples (2.5s @ 240Hz)
       - pooled_features: (B, 512)
     """
 
-    # Paper: input_size=2.5s, fs_model=240 → 600 samples per window.
-    chunk_seconds = 2.5
+    # Encoder contract (original run.sh: --input-size 2.5 --fs-model 240).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 2.5          # seconds
     model_fs = 240
     model_seq_len = 600
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 2.5       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None, config_path=None):
         super().__init__()
@@ -244,7 +250,7 @@ class CPCEncoder(nn.Module):
         print(f"[CPCEncoder] Loaded from {path} (epoch={ckpt.get('epoch', '?')})")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 600 samples (2.5s @ 240Hz)
+        """x: (B, 12, T) from the dataset: 600 samples (2.5s @ 240Hz)
 
         Paper's forward  and identically :
           encoder (B,12,T) → (B,512,T')
@@ -254,8 +260,7 @@ class CPCEncoder(nn.Module):
           → pooling (B, 512)
         """
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
 
         # Encoder: (B, 12, 600) → (B, 512, T')
         enc_out = self.encoder(x)

@@ -5,6 +5,7 @@
 task:
   name: echonext
   num_classes: 11
+  expected_num_classes: 11   # main_lite_ecg.py
 
 data:
   loader_type: echonext_numpy
@@ -27,8 +28,6 @@ data:
     - tr_max_gte_32_flag
   split_col: split
   source_fs: 250
-  target_fs: 250
-  target_length: 2500          # 250Hz × 10s
   normalize: false             # dataset  already z-score normalization 
   layout: NHWC                 # (N, 1, T, C)
   n_leads: 12

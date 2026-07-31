@@ -32,6 +32,28 @@ declare -A MODEL_CLS_MAP=(
     # MoRyECG A5: Axial S4D + MHA backbone (d_model=384, ~26M), cb1024, full HEEDB pretrain.
     # Dedicated adapter (does NOT reuse the transformer-family MoRyECGEncoder).
     [moryecg_a5]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    # MoRyECG A5 data-scaling sweep — same adapter/backbone as moryecg_a5, only the
+    # pretrain data size (and hence ckpt) differs. full == moryecg_a5 above.
+    [moryecg_a5_p05]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_p1]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_p3]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_p5]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_p05_isocompute]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_p1_isocompute]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    # MoRyECG A5 heedb_scale_tables ladder (5k..3200k, nested; fixed val/test seed2025)
+    [moryecg_a5_s5k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s10k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s25k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s50k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s100k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s200k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s400k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s800k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s1600k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    [moryecg_a5_s3200k]="src.encoders.moryecg_a5.MoRyECGA5Encoder"
+    # MoRyECG A5 / GNN-RVQ: same axial backbone but driven by the frozen GNN-RVQ
+    # patch tokenizer (backbone == "axial_s4_rvq"). Separate adapter + checkpoint.
+    [moryecg_a5_rvqgnn]="src.encoders.moryecg_a5_rvqgnn.MoRyECGA5RVQGNNEncoder"
 )
 
 # MoRyECG pretrain repo. Defaults to the parent of this benchmark directory
@@ -56,6 +78,26 @@ declare -A MODEL_CKPT_MAP=(
     # A5 axial_s4 pretrain output (configs/pretrain/axial_s4_a5_heedb_full_cb1024.yaml).
     # Tokenizer auto-derived → checkpoints/tokenizer_heedb_full_cb1024_v4/best.pt
     [moryecg_a5]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_axial_s4_a5_heedb_full_cb1024/best.pt"
+    # A5 data-scaling sweep ckpts (output of scripts/scaling/run_scaling_sweep.sh).
+    [moryecg_a5_p05]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p05/best.pt"
+    [moryecg_a5_p1]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p1/best.pt"
+    [moryecg_a5_p3]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p3/best.pt"
+    [moryecg_a5_p5]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p5/best.pt"
+    [moryecg_a5_p05_isocompute]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p05_isocompute/best.pt"
+    [moryecg_a5_p1_isocompute]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scaling/p1_isocompute/best.pt"
+    # heedb_scale_tables ladder ckpts (output of scripts/scaling/run_scale_tables_sweep.sh)
+    [moryecg_a5_s5k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/5k/best.pt"
+    [moryecg_a5_s10k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/10k/best.pt"
+    [moryecg_a5_s25k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/25k/best.pt"
+    [moryecg_a5_s50k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/50k/best.pt"
+    [moryecg_a5_s100k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/100k/best.pt"
+    [moryecg_a5_s200k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/200k/best.pt"
+    [moryecg_a5_s400k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/400k/best.pt"
+    [moryecg_a5_s800k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/800k/best.pt"
+    [moryecg_a5_s1600k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/1600k/best.pt"
+    [moryecg_a5_s3200k]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_a5_scale/3200k/best.pt"
+    # RVQ-A5: tokenizer path is auto-read from the checkpoint's 'tokenizer_ckpt'.
+    [moryecg_a5_rvqgnn]="${MORYECG_REPO_DEFAULT}/checkpoints/pretrain_axial_s4_a5_rvqgnn_patch100/best.pt"
 )
 
 # Default run order (when MODELS_OVERRIDE is unset).

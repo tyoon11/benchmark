@@ -1,30 +1,55 @@
-# Default training config (matches the original ecg-fm-benchmarking)
+# Defaults, matched to the original ecg-fm-benchmarking (code/run.sh + main_lite.py).
+#
+# The input window is NOT configured here: each encoder adapter declares
+# `input_size` (seconds) and `model_fs` (Hz) — the equivalent of --input-size /
+# --fs-model in the original run.sh — and run.py feeds those into the dataset.
+# Task configs therefore no longer carry target_fs / target_length.
+
 train:
-  epochs: 100
-  lr: 1e-3
+  epochs: 100               # run.sh: --epochs 100
+  lr: 1e-3                  # run.sh: LEARNING_RATE=0.001
   lr_min: 1e-6
-  weight_decay: 1e-3
-  warmup_epochs: 0          # paper uses const schedule
-  lr_schedule: const        # const | cosine | warmup_cos
+  weight_decay: 1e-3        # main_lite.py: --wd default 1e-3
+  warmup_epochs: 0
+  lr_schedule: const        # main_lite.py: --lr-schedule default 'const'
   discriminative_lr_factor: 0.1
   device: cuda
 
-# default eval_mode
-# linear_probe | attention_probe | finetune_linear | finetune_attention
+  # main_lite.py: --precision default '16-mixed' (run.sh forces 32 for s4/cpc).
+  # Override per model with `--precision 32`.
+  precision: 16-mixed
+
+  # Test-split empirical bootstrap, as in eval_scores(..., bootstrap=test).
+  bootstrap_iterations: 1000
+  export_predictions: false
+
+# Data windowing defaults — the original CLI defaults.
+data:
+  chunkify_train: false          # --chunkify-train is not set in run.sh
+  chunk_length_train: 1.0        # multiples of the window
+  stride_fraction_train: 1.0
+  stride_fraction_valtest: 1.0   # non-overlapping val/test windows
+  seg_mode: all                  # use every H5 segment of a record, not just seg 0
+  normalize: false               # run.sh does not pass --normalize
+  # lead_order defaults to whatever the encoder declares (standard 12-lead for
+  # every published baseline, 'heedb' for the MoRyECG adapters). Set it here
+  # only to override the encoder.
+
+# eval_mode (left) maps to the original --eval-mode (right):
+#   linear_probe -> linear | attention_probe -> frozen
+#   finetune_linear -> finetuning_linear | finetune_attention -> finetuning_nonlinear
 eval_mode: linear_probe
 
 # Head config
 head:
   dropout: 0.0
-  num_heads: 16    # attention head (for) (paper: heads=16)
-  hidden_dim: 256  # mlp head (for)
+  num_heads: 16    # LearnableQueryAttentionPoolingHeadConfig(heads=16)
+  hidden_dim: 256  # mlp head only
 
-# Fold split (ecg-fm-benchmarking identical )
-# strat_fold column table CSV in if present, automatic use
-# train = fold < max-1, val = max-1, test = max
+# Fold split, identical to the original:
+#   train = strat_fold < max-1, val = max-1, test = max
 fold:
-  col: strat_fold        # fold column name
-  auto_split: true       # true then max_fold based automatic split
+  col: strat_fold
+  auto_split: true
 
-# save
-save_dir: null  # null → ./results/{task_name}_{eval_mode}_{timestamp}
+save_dir: null  # null -> ./results/{timestamp}/{task}_{eval_mode}

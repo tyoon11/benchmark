@@ -26,7 +26,15 @@ cd "$SCRIPT_DIR"
 
 # CPC(S4/pykeops)  do GLIBCXX_3.4.32   libstdc++ none.
 # rationale: ship a newer libstdc++ to the JIT-compiled nvrtc_jit.so (see README)
-export LD_PRELOAD=${HOME}/.conda/envs/ecg-fm/lib/libstdc++.so.6
+# Ship a newer libstdc++ to the JIT-compiled nvrtc_jit.so that CPC's S4/pykeops
+# builds (see README). Resolve it from the active env; a missing path in
+# LD_PRELOAD makes the loader warn on every single process.
+_LIBSTDCXX="$(dirname "$(dirname "$(command -v python)")")/lib/libstdc++.so.6"
+if [ -f "$_LIBSTDCXX" ]; then
+    export LD_PRELOAD="$_LIBSTDCXX"
+else
+    echo "[warn] libstdc++.so.6 not found next to $(command -v python) — CPC may fail to JIT" >&2
+fi
 
 if [ -n "$RESUME_TS" ]; then
     TIMESTAMP="$RESUME_TS"
@@ -79,7 +87,10 @@ N_GPUS=${#GPU_IDS[@]}
 if [ -n "$TASKS_OVERRIDE" ]; then
     TASKS=($TASKS_OVERRIDE)
 else
-    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15 ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm sph_diag zzu_pecg echonext)
+    # The 14 tasks the original benchmarks (main_lite_ecg.py / run.sh), plus the
+    # PTB-XL sub-task variants this repo adds. code15_diag (not code15) is the
+    # canonical CODE-15 task: it carries the `data_length >= 4000` cohort filter.
+    TASKS=(ptb ningbo cpsc2018 cpsc_extra georgia chapman chapman_rhythm code15_diag ptbxl_all ptbxl_super ptbxl_diag ptbxl_sub ptbxl_form ptbxl_rhythm sph_diag zzu_pecg echonext)
 fi
 
 # ─────────────────────────────────────────────────────────────
@@ -132,11 +143,19 @@ run_model() {
             echo " [GPU $gpu] $model_name / $task / $mode  ($(date '+%H:%M:%S'))"
             echo "────────────────────────────────────────────────────────────"
 
+            # The original runs 16-mixed everywhere except the S4-based models
+            # (run.sh adds `--precision 32` for s4 and cpc).
+            local precision_arg=""
+            case "$model_name" in
+                cpc|s4) precision_arg="--precision 32" ;;
+            esac
+
             CUDA_VISIBLE_DEVICES=$gpu python run.py \
                 --task "$task" --eval_mode "$mode" \
                 --encoder_cls "$encoder_cls" \
                 --encoder_ckpt "$encoder_ckpt" \
-                --epochs $epochs $lr_arg \
+                --epochs $epochs $lr_arg $precision_arg \
+                ${EXTRA_RUN_ARGS:-} \
                 --save_dir "$save_dir" \
                 2>&1
 

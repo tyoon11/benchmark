@@ -44,6 +44,8 @@ from .moryecg import (
     _import_pretrain_modules,
     _autodetect_tokenizer_ckpt,
     _resolve_cache_root,
+    _resolve_pool_mode,
+    pool_tokens,
     preprocess_signal,
     cache_path,
     load_cache,
@@ -107,7 +109,13 @@ class MoRyECGA5Encoder(nn.Module):
       feature_dim   : set per-instance from model_cfg["d_model"] (384 for A5)
     """
 
-    chunk_seconds = 10.0
+    # Encoder contract. MoRyECG was pre-trained on the HEEDB channel order
+    # (I,II,III,V1..V6,aVF,aVL,aVR) and its beat/STFT preprocessing cache is keyed
+    # to that layout, so this adapter asks the dataset for HEEDB order while the
+    # published baselines get the standard order. See src/leads.py.
+    input_size = 10.0          # seconds
+    lead_order = "heedb"
+    chunk_seconds = 10.0       # deprecated alias for input_size
     model_fs = MODEL_FS
     model_seq_len = MODEL_SEQ_LEN
     feature_dim = 384  # instance __init__ overrides from model_cfg["d_model"]
@@ -118,9 +126,11 @@ class MoRyECGA5Encoder(nn.Module):
         tokenizer_ckpt: Optional[str] = None,
         repo_root: Optional[str] = None,
         cache_root: Optional[str] = None,
+        pool_mode: Optional[str] = None,
     ):
         super().__init__()
 
+        self.pool_mode = _resolve_pool_mode(pool_mode)
         repo = _resolve_repo_root(repo_root)
         mods = _import_pretrain_modules(repo)   # VQVAE + preprocessing fns
         self._mods = mods
@@ -270,7 +280,7 @@ class MoRyECGA5Encoder(nn.Module):
         **_unused,
     ):
         """
-        x: (B, 12, T) raw ECG at task target_fs.
+        x: (B, 12, T) raw ECG at the encoder contract rate (input_size x model_fs).
         Returns: (sequence_features (B, max_beats*12, D), pooled (B, D)).
 
         The axial S4 model treats zero-padded beats as valid (it has no
@@ -302,8 +312,7 @@ class MoRyECGA5Encoder(nn.Module):
         indices = idx_flat.view(B, N, L).long()
 
         out = self.model(indices, rr, stft)   # (B, 1 + N*L, D)
-        pooled = out[:, 0, :]
-        seq_feat = out[:, 1:, :]
+        seq_feat, pooled = pool_tokens(out, self.pool_mode)
         return seq_feat, pooled
 
     # ── layer-dependent LR groups (paper finetune contract) ──────────────────

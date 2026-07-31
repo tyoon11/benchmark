@@ -1,86 +1,217 @@
 """
 H5-backed ECG Dataset
-====================
-Load signals directly from H5 and join with the label CSV to return multi-hot labels.
+=====================
+Reproduces the windowing/resampling contract of the original
+``ecg-fm-benchmarking`` (``main_lite_base.Main_Lite.setup`` +
+``clinical_ts.data.time_series_dataset.TimeSeriesDataset``) on top of the HEEDB
+H5 store.
+
+Original contract, restated
+---------------------------
+``input_size`` (seconds) and ``fs_model`` come from the *model*; ``fs_data`` is
+the dataset's native rate. Then::
+
+    output_size          = int(input_size * fs_data)          # crop, in native samples
+    chunk_length_train   = 0 if not chunkify_train            # one window per record
+    chunk_length_valtest = output_size
+    stride_valtest       = stride_fraction_valtest * output_size
+
+* train: one entry per record spanning the whole record; ``__getitem__`` takes a
+  random crop of ``output_size``.
+* val/test: the record is cut into windows of ``output_size`` at ``stride``;
+  any trailing window shorter than ``output_size`` — and everything after it —
+  is dropped. Predictions are averaged per record afterwards.
+* records shorter than ``output_size`` produce no windows at all, i.e. they are
+  dropped (the original never zero-pads).
+* the crop is taken at the native rate and only *then* resampled to ``fs_model``
+  with a band-limited resampler.
+
+Deviations from the previous implementation of this file, all of which changed
+results for the pretrained baselines:
+
+* leads are permuted from the HEEDB order to whatever the encoder declares
+  (see :mod:`src.leads`) — previously 9 of 12 leads reached the model in the
+  wrong slot;
+* resampling is band-limited instead of ``F.interpolate(mode="linear")``;
+* windows are cut at the native rate over the *whole* record (all segments)
+  rather than over the first 10 s of segment 0;
+* short records are dropped instead of zero-padded;
+* ``min_data_length`` reproduces the ``data_length >= N`` cohort filters.
+
+``target_fs`` / ``target_length`` from older task configs are ignored (with a
+warning): the window is now fully determined by the encoder's ``input_size`` /
+``model_fs`` and the dataset's native rate, exactly as in the original.
 """
 
+from __future__ import annotations
+
+import logging
 import os
+import random
+from pathlib import Path
+
+import h5py
 import numpy as np
 import pandas as pd
-import h5py
 import torch
 from torch.utils.data import Dataset
-from pathlib import Path
+
+from .leads import (build_lead_permutation, describe_permutation,
+                    parse_channel_names, resolve_target_order)
+from .signal_utils import fit_length, load_record_lengths, resample_signal
+
+logger = logging.getLogger(__name__)
+
+# Columns of *_table.csv / *_labels.csv that are metadata rather than labels.
+NON_LABEL_COLS = {
+    "filepath", "dataset", "pid", "rid", "sid", "oid",
+    "age", "gender", "height", "weight", "fs",
+    "channel_name", "nan_ratio", "amp_mean", "amp_std",
+    "amp_skewness", "amp_kurtosis", "bs_corr", "bs_dtw",
+    "strat_fold", "fold", "split",
+}
+
+
+# Bumped whenever the MoRyECG preprocessing pipeline changes in a way that
+# invalidates precomputed cache entries.
+PIPELINE_VERSION = "2026.07.31-parity"
+CACHE_STAMP_FILE = "_cache_stamp.json"
+
+_stamp_warned = set()
+
+
+def cache_stamp(model_fs, lead_order, seg_mode="all") -> dict:
+    """Identity of a MoRyECG preprocessing cache.
+
+    Entries are whole-*segment* R-peak/beat/STFT bundles read straight from the
+    H5 at ``model_fs`` in the store's own lead order — the benchmark window
+    (``input_size``) is deliberately absent, because on a cache hit the encoder
+    ignores the windowed tensor and consumes the bundle directly. What does
+    invalidate an entry is the preprocessing code, the rate it ran at, or the
+    lead order; what makes a cache *incomplete* is ``seg_mode``.
+    """
+    return {
+        "pipeline": PIPELINE_VERSION,
+        "model_fs": float(model_fs),
+        "lead_order": str(lead_order),
+        "seg_mode": str(seg_mode),
+    }
+
+
+def check_cache_stamp(cache_root, model_fs, lead_order, seg_mode="all", split=""):
+    """Warn when a MoRyECG preprocessing cache may be stale or incomplete.
+
+    The cache is keyed by ``(filepath, seg_idx)`` only, so a mismatched entry
+    still looks like a hit. ``scripts/precompute_moryecg_cache.py`` writes the
+    stamp; caches predating it have none, and those were built with
+    ``seg_idx=0`` — every segment past the first is missing and will fall back
+    to (correct but slow) live preprocessing.
+    """
+    import json
+
+    stamp_path = Path(cache_root) / CACHE_STAMP_FILE
+    want = cache_stamp(model_fs, lead_order, seg_mode)
+    key = (str(stamp_path), tuple(sorted(want.items())))
+    if key in _stamp_warned:
+        return
+    _stamp_warned.add(key)
+
+    if not stamp_path.exists():
+        logger.warning(
+            "[%s] MORYECG_CACHE=%s has no %s. Entry *content* is still valid "
+            "(whole-segment bundles are independent of the window), but caches "
+            "written before this file only covered seg_idx=0, so multi-segment "
+            "records will miss and preprocess live. Top it up with "
+            "scripts/precompute_moryecg_cache.py.", split, cache_root, CACHE_STAMP_FILE)
+        return
+
+    try:
+        have = json.loads(stamp_path.read_text())
+    except (OSError, ValueError) as exc:
+        logger.warning("[%s] could not read %s: %s", split, stamp_path, exc)
+        return
+
+    diff = {k: (have.get(k), v) for k, v in want.items() if have.get(k) != v}
+    if diff:
+        logger.warning(
+            "[%s] MORYECG_CACHE=%s stamp disagrees with this run — %s "
+            "(have, want). Rebuild with --force, or unset MORYECG_CACHE.",
+            split, cache_root, diff)
 
 
 class H5ECGDataset(Dataset):
-    """
-    H5 ECG downstream-task dataset.
-
-    Each sample is loaded from a single segment of the H5 file.
-    - signal: (n_leads, target_length) float32
-    - label:  multi-hot vector (num_classes,)
-
-    Resampling logic:
-      even when the fs differs per dataset (200/250/257/400/500/1000 Hz)
-      convert to the fixed input expected by the model (target_fs * target_seconds = target_length).
-
-      Examples: when ECG-JEPA expects 500 Hz x 5 s = 2500 samples
-        - heedb 500Hz, 5000samples (10 s) → 500Hz keep, first 2500samples crop
-        - code15 400Hz, 4096samples (10.24 s) → 500Hz upsample to(5120) → first 2500 crop
-        - cpsc2021 200Hz, 2000samples (10 s) → 500Hz upsample to(5000) → first 2500 crop
-        - ptb 1000Hz, 10000samples (10 s) → 500Hz downsample to(5000) → first 2500 crop
-        - stpetersburg 257Hz → 500Hz upsample to → crop
+    """H5 ECG dataset with paper-faithful cropping, chunking and resampling.
 
     Args:
-        h5_root:        H5 data/ directory's above directory
-        table_csv:      ecg_table.csv (filepath, pid, rid, fs etc.)
-        label_csv:      {dataset}_labels.csv (filepath + binary label column)
-        label_cols:     useto label column list (None if so, label_csv's all non-key column)
-        target_fs:      expected by the model sampling  (None if so, resampling inside )
-        target_length:  expected by the model  length (samples, None if so,  inside )
-        chunk_length:   encoder  in  window size (target_fs reference: samples ).
-                        None if so, chunking none (all ECG as-is return).
-                        random_crop=False (val/test): ECG 1
-                        ⌊target_length/chunk_length⌋  non-overlapping chunk by extension.
-                        random_crop=True  (train)  : ECG 1 per 1 sample, 
-                        __getitem__ each  random offset from chunk_length only slice
-                        (paper main_lite.py default chunkify_train=False).
-        random_crop:    True then train mode (random offset), False then deterministic
-                        chunking. (paper §3.3)
-        seg_idx:        useto segment isdex (None if so, seg0 only, 'all' if so, all segment)
-        normalize:      True then per-lead z-score (dataset mean/std)
-        fold_col:       fold column name
-        fold_ids:       useto fold ID list (None if so, all)
-        mean:           per-lead mean (n_leads,) for normalization
-        std:            per-lead std (n_leads,) for normalization
+        h5_root:        directory containing the ``data/`` tree referenced by
+                        ``filepath`` in the table CSV.
+        table_csv:      ``{dataset}_table.csv`` (filepath, fs, channel_name, strat_fold, ...).
+        label_csv:      ``{dataset}_labels.csv``; inner-joined on ``filepath``.
+        label_cols:     label columns to use (defaults to every non-metadata column).
+        split:          ``'train'`` | ``'val'`` | ``'test'`` — selects the
+                        chunking regime (random crop vs. strided windows).
+        input_size:     window length in **seconds** (encoder contract).
+        fs_model:       rate the encoder expects, in Hz (encoder contract).
+        fs_data:        override the dataset's native rate; ``None`` uses the
+                        per-record ``fs`` from the table/H5 header.
+        chunkify_train: original ``--chunkify-train`` (default False).
+        chunk_length_train / stride_fraction_train / stride_fraction_valtest:
+                        multiples of the window, as in the original CLI.
+        min_data_length: drop records whose total native length is below this
+                        (reproduces ``df[df.data_length >= N]``).
+        seg_mode:       ``'all'`` (every H5 segment, default) or ``'first'``.
+        lead_order:     ``'standard'`` (default), ``'heedb'``, ``'native'`` or an
+                        explicit list of lead names.
+        normalize/mean/std:  optional per-lead z-scoring (original default: off).
+        fold_col/fold_ids:   fold-based split selection.
+        task_type:      ``binary`` | ``multi-label-binary`` | ``regression`` |
+                        ``classification_and_regression``.
+        target_mean/target_std: train-fold statistics for regression z-scoring.
+        cls_cols/reg_cols:      column split for the joint MIMIC task.
     """
 
     def __init__(
         self,
-        h5_root:       str,
-        table_csv:     str,
-        label_csv:     str = None,
-        label_cols:    list = None,
-        target_fs:     int = None,
+        h5_root: str,
+        table_csv: str,
+        label_csv: str = None,
+        label_cols: list = None,
+        *,
+        split: str = "train",
+        input_size: float = 2.5,
+        fs_model: float = 500,
+        fs_data: float = None,
+        chunkify_train: bool = False,
+        chunk_length_train: float = 1.0,
+        stride_fraction_train: float = 1.0,
+        stride_fraction_valtest: float = 1.0,
+        min_data_length: int = None,
+        seg_mode: str = "all",
+        lead_order="standard",
+        normalize: bool = False,
+        mean: np.ndarray = None,
+        std: np.ndarray = None,
+        fold_col: str = None,
+        fold_ids: list = None,
+        task_type: str = "binary",
+        target_mean: np.ndarray = None,
+        target_std: np.ndarray = None,
+        cls_cols: list = None,
+        reg_cols: list = None,
+        # deprecated, accepted so old configs do not crash
+        target_fs: int = None,
         target_length: int = None,
-        chunk_length:  int = None,
-        random_crop:   bool = False,
-        seg_idx:       str = None,  # None(=0), 'all', or int
-        normalize:     bool = False,
-        fold_col:      str = None,
-        fold_ids:      list = None,
-        mean:          np.ndarray = None,
-        std:           np.ndarray = None,
-        task_type:     str = "binary",  # 'binary' | 'regression' | 'multi-label-binary' | 'classification_and_regression'
-        target_mean:   np.ndarray = None,  # regression z-norm mean (paper-faithful)
-        target_std:    np.ndarray = None,  # regression z-norm std
-        cls_cols:      list = None,        # joint task only: classification subset (NaN-masked BCE)
-        reg_cols:      list = None,        # joint task only: regression subset (NaN-masked L1, z-normed)
+        chunk_length: int = None,
+        random_crop: bool = None,
+        seg_idx=None,
     ):
         self.h5_root = Path(h5_root)
-        self.target_fs = target_fs
-        self.target_length = target_length
+        self.table_csv = str(table_csv)
+        self.split = split
+        self.is_train = (split == "train")
+        self.input_size = float(input_size)
+        self.fs_model = float(fs_model)
+        self.fs_data_override = float(fs_data) if fs_data else None
         self.normalize = normalize
         self.mean = mean
         self.std = std
@@ -89,246 +220,390 @@ class H5ECGDataset(Dataset):
         self.target_std = np.asarray(target_std, dtype=np.float32) if target_std is not None else None
         self.cls_cols = list(cls_cols) if cls_cols is not None else None
         self.reg_cols = list(reg_cols) if reg_cols is not None else None
-        self.num_cls = len(self.cls_cols) if self.cls_cols else 0
-        self.num_reg = len(self.reg_cols) if self.reg_cols else 0
 
-        # metadata table load
+        for name, value in (("target_fs", target_fs), ("target_length", target_length),
+                            ("chunk_length", chunk_length), ("seg_idx", seg_idx)):
+            if value is not None:
+                logger.warning(
+                    "H5ECGDataset: '%s' is deprecated and ignored — the window is "
+                    "derived from the encoder contract (input_size=%.4gs, fs_model=%g) "
+                    "and the record's native rate.", name, self.input_size, self.fs_model)
+
+        # Model-side window length, i.e. what the encoder receives.
+        self.model_seq_len = int(round(self.input_size * self.fs_model))
+
+        # ── table + labels ────────────────────────────────────────────────
         self.table = pd.read_csv(table_csv, low_memory=False)
+        # Keep the unfiltered filepath list so the length cache is built once for
+        # the whole dataset instead of once per split.
+        all_filepaths = self.table["filepath"].tolist()
 
-        # label CSV load + is
         if label_csv is not None and not os.path.exists(label_csv):
             raise FileNotFoundError(
-                f"label_csv  file missing: {label_csv}\n"
-                f"  → task yaml's label_csv path confirm. "
-                f"(relative pathis  run.py automatically repo root reference as resolve.)"
-            )
+                f"label_csv not found: {label_csv}\n"
+                f"  -> check 'data.label_csv' in the task yaml (relative paths are "
+                f"resolved against the benchmark root by run.py).")
         self.has_labels = label_csv is not None
         if self.has_labels:
             label_df = pd.read_csv(label_csv, low_memory=False)
-            key_cols = ["filepath"]
             n_before = len(self.table)
-            # inner join: label ECG only training in use
-            # (mimic4_table 800k ECG all, each task's cohort  )
-            self.table = self.table.merge(label_df, on=key_cols, how="inner",
+            self.table = self.table.merge(label_df, on=["filepath"], how="inner",
                                           suffixes=("_table", ""))
             if n_before != len(self.table):
-                import logging
-                logging.info(f"  Label join: {n_before:,} → {len(self.table):,} rows "
-                             f"(label ECG only)")
+                logger.info("  Label join: %s -> %s rows (labelled records only)",
+                            f"{n_before:,}", f"{len(self.table):,}")
 
             if self.task_type == "classification_and_regression":
-                # joint task: explicit cls_cols + reg_cols required
                 if not self.cls_cols or not self.reg_cols:
                     raise ValueError(
                         "task_type='classification_and_regression' requires both "
-                        "cls_cols and reg_cols to be set in the task config.")
+                        "cls_cols and reg_cols in the task config.")
                 label_cols = list(self.cls_cols) + list(self.reg_cols)
             elif label_cols is None:
-                # key not all column = label
-                non_label = {"filepath", "dataset", "pid", "rid", "sid", "oid",
-                             "age", "gender", "height", "weight", "fs",
-                             "channel_name", "nan_ratio", "amp_mean", "amp_std",
-                             "amp_skewness", "amp_kurtosis", "bs_corr", "bs_dtw",
-                             "strat_fold", "fold", "split"}
-                label_cols = [c for c in label_df.columns if c not in non_label]
+                label_cols = [c for c in label_df.columns if c not in NON_LABEL_COLS]
             self.label_cols = label_cols
             self.num_classes = len(label_cols)
         else:
             self.label_cols = []
             self.num_classes = 0
 
-        # Fold filtering
+        # ── fold filtering ────────────────────────────────────────────────
         if fold_col and fold_ids is not None:
-            self.table = self.table[self.table[fold_col].isin(fold_ids)].reset_index(drop=True)
+            self.table = self.table[self.table[fold_col].isin(fold_ids)]
+        self.table = self.table.reset_index(drop=True)
 
-        # segment extension (all if so, all segment per samples by)
-        if seg_idx == "all":
-            self._expand_segments()
-        else:
-            self.seg_indices = [int(seg_idx) if seg_idx is not None else 0] * len(self.table)
+        if len(self.table) == 0:
+            raise RuntimeError(
+                f"[{split}] no records left after the label join and fold filter "
+                f"(fold_col={fold_col!r}, fold_ids={fold_ids}). Check that those folds "
+                f"exist in {table_csv}.")
 
-        # ── Chunk extension (paper §3.3 multi-window train + test-time aggregation) ──
-        # train (random_crop=True):  1 sample/ECG, __getitem__ each  random offset
-        # val/test (random_crop=False): ⌊target_length/chunk_length⌋ deterministic chunks
-        self.chunk_length = chunk_length
-        self.random_crop = random_crop
-        if (chunk_length is not None and target_length is not None
-                and chunk_length > 0 and chunk_length < target_length):
-            if random_crop:
-                self.n_chunks_per_ecg = 1   # random offset, 1 view per epoch
-            else:
-                self.n_chunks_per_ecg = int(target_length // chunk_length)
-            self._random_max_start = int(target_length - chunk_length)
-        else:
-            self.n_chunks_per_ecg = 1
-            self.chunk_length = None
-            self._random_max_start = 0
+        # ── lead permutation (H5 order -> encoder order) ──────────────────
+        self.target_leads = resolve_target_order(lead_order)
+        self.source_leads = None
+        channel_col = next((c for c in ("channel_name", "channel_name_table")
+                            if c in self.table.columns), None)
+        if channel_col:
+            self.source_leads = parse_channel_names(self.table[channel_col].iloc[0])
+        if self.target_leads and not self.source_leads:
+            # Silently skipping the permutation is how the pre-parity pipeline fed
+            # 9 mis-ordered leads to every pretrained baseline — make it loud.
+            logger.warning(
+                "[%s] lead_order=%r was requested but the source order is unknown "
+                "(no usable 'channel_name' column in %s). Leads are passed through "
+                "UNCHANGED — if the store is not already in %s order the pretrained "
+                "encoders will see permuted leads.",
+                split, lead_order, Path(table_csv).name, self.target_leads[:6])
+        self.lead_perm = build_lead_permutation(self.source_leads, self.target_leads)
+        logger.info("  [%s] %s", split,
+                    describe_permutation(self.source_leads, self.target_leads, self.lead_perm))
 
-        n_rows = len(self.table)
-        if self.n_chunks_per_ecg > 1:
-            self._row_idx = np.repeat(np.arange(n_rows), self.n_chunks_per_ecg)
-            self._chunk_idx = np.tile(np.arange(self.n_chunks_per_ecg), n_rows)
-        else:
-            self._row_idx = np.arange(n_rows)
-            self._chunk_idx = np.zeros(n_rows, dtype=int)
+        # ── per-segment lengths ───────────────────────────────────────────
+        lengths = load_record_lengths(str(self.h5_root), self.table_csv, all_filepaths)
+        self._build_index(lengths, min_data_length, seg_mode,
+                          chunkify_train, chunk_length_train,
+                          stride_fraction_train, stride_fraction_valtest)
 
-    def _expand_segments(self):
-        """all segment per samples by extension."""
-        expanded_rows = []
-        expanded_segs = []
-        for i, row in self.table.iterrows():
-            h5_path = self.h5_root / row["filepath"]
+        # ── label matrix (pre-extracted; avoids per-item DataFrame lookups) ─
+        self._build_label_matrix()
+
+        # ── optional H5-read skip when the MoRyECG preprocessing cache hits ─
+        self._skip_h5_if_cached = os.environ.get("MORYECG_SKIP_H5_IF_CACHED") == "1"
+        self._pp_cache_root = os.environ.get("MORYECG_CACHE")
+        self._cache_path_fn = None
+        if self._pp_cache_root:
+            check_cache_stamp(self._pp_cache_root, self.fs_model, lead_order,
+                              seg_mode, self.split)
+        if self._skip_h5_if_cached and self._pp_cache_root:
             try:
-                with h5py.File(h5_path, "r") as f:
-                    n_segs = int(f["ECG/segments"].attrs.get("seg_len", 1))
-                for s in range(n_segs):
-                    expanded_rows.append(i)
-                    expanded_segs.append(s)
-            except Exception:
-                expanded_rows.append(i)
-                expanded_segs.append(0)
-        self.table = self.table.iloc[expanded_rows].reset_index(drop=True)
-        self.seg_indices = expanded_segs
+                from src.encoders.moryecg import cache_path as _cp
 
+                self._cache_path_fn = _cp
+            except Exception:
+                self._skip_h5_if_cached = False
+
+    # ------------------------------------------------------------------
+    # index construction
+    # ------------------------------------------------------------------
+    def _build_index(self, lengths_df, min_data_length, seg_mode,
+                     chunkify_train, chunk_length_train,
+                     stride_fraction_train, stride_fraction_valtest):
+        """Build ``(row, seg, start, end)`` windows, mirroring TimeSeriesDataset."""
+        by_path = {}
+        for fp, seg, length, fs in lengths_df.itertuples(index=False):
+            by_path.setdefault(fp, []).append((int(seg), int(length), int(fs)))
+        for segs in by_path.values():
+            segs.sort()
+
+        if "fs" in self.table.columns:
+            table_fs = pd.to_numeric(self.table["fs"], errors="coerce").to_numpy(dtype=np.float64)
+            table_fs = np.nan_to_num(table_fs, nan=0.0)
+        else:
+            table_fs = np.zeros(len(self.table), dtype=np.float64)
+
+        row_idx, seg_idx, start_idx, end_idx, fs_list, out_sizes = [], [], [], [], [], []
+        # CSR-style candidate segments, used only by the random-crop train entries
+        cand_offsets, cand_segs, cand_lens = [0], [], []
+        n_dropped_short, n_dropped_filter, n_missing = 0, 0, 0
+        random_crop_entries = self.is_train and not chunkify_train
+
+        for i, fp in enumerate(self.table["filepath"].to_numpy()):
+            segs = by_path.get(fp)
+            if not segs:
+                n_missing += 1
+                continue
+
+            fs = self.fs_data_override
+            if not fs:
+                fs = table_fs[i] if table_fs[i] else 0
+            if not fs:
+                fs = next((s[2] for s in segs if s[2]), 0)
+            if not fs:
+                n_missing += 1
+                continue
+            fs = float(fs)
+
+            total_length = sum(s[1] for s in segs)
+            if min_data_length and total_length < int(min_data_length):
+                n_dropped_filter += 1
+                continue
+
+            output_size = int(round(self.input_size * fs))
+            use_segs = segs if seg_mode == "all" else segs[:1]
+
+            eligible = [(seg, length) for seg, length, _ in use_segs if length >= output_size]
+            if not eligible:
+                n_dropped_short += 1
+                continue
+
+            if random_crop_entries:
+                # chunk_length == 0 in the original: exactly ONE training window per
+                # record per epoch, cropped at random. The H5 store splits long
+                # records into segments, so the segment is drawn here too — weighted
+                # by the number of valid start offsets it contains, which makes the
+                # crop uniform over the record's timeline just as it is in the
+                # original's single contiguous memmap.
+                row_idx.append(i)
+                seg_idx.append(eligible[0][0])
+                start_idx.append(-1)          # sentinel: resolved in __getitem__
+                end_idx.append(-1)
+                fs_list.append(fs)
+                out_sizes.append(output_size)
+                for seg, length in eligible:
+                    cand_segs.append(seg)
+                    cand_lens.append(length)
+                cand_offsets.append(len(cand_segs))
+                continue
+
+            windows = []
+            for seg, length in eligible:
+                if self.is_train:
+                    chunk = max(int(chunk_length_train * output_size), 1)
+                    stride = max(int(stride_fraction_train * output_size), 1)
+                else:
+                    chunk = output_size
+                    stride = max(int(stride_fraction_valtest * output_size), 1)
+                for s in range(0, length, stride):
+                    e = min(s + chunk, length)
+                    if e - s < output_size:
+                        break  # original deletes this window and every later one
+                    windows.append((seg, s, e))
+
+            if not windows:
+                n_dropped_short += 1
+                continue
+
+            for seg, s, e in windows:
+                row_idx.append(i)
+                seg_idx.append(seg)
+                start_idx.append(s)
+                end_idx.append(e)
+                fs_list.append(fs)
+                out_sizes.append(output_size)
+
+        self._row_idx = np.asarray(row_idx, dtype=np.int64)
+        self._seg_idx = np.asarray(seg_idx, dtype=np.int64)
+        self._start_idx = np.asarray(start_idx, dtype=np.int64)
+        self._end_idx = np.asarray(end_idx, dtype=np.int64)
+        self._fs = np.asarray(fs_list, dtype=np.float64)
+        self._output_size = np.asarray(out_sizes, dtype=np.int64)
+        self._random_crop_entries = random_crop_entries
+        self._cand_offsets = np.asarray(cand_offsets, dtype=np.int64)
+        self._cand_segs = np.asarray(cand_segs, dtype=np.int64)
+        self._cand_lens = np.asarray(cand_lens, dtype=np.int64)
+
+        n_records = len(np.unique(self._row_idx)) if len(self._row_idx) else 0
+        logger.info(
+            "  [%s] %s windows over %s records (input_size=%.4gs -> %d samples @ %gHz)"
+            "%s%s%s",
+            self.split, f"{len(self._row_idx):,}", f"{n_records:,}",
+            self.input_size, self.model_seq_len, self.fs_model,
+            f" | dropped {n_dropped_short:,} too-short" if n_dropped_short else "",
+            f" | dropped {n_dropped_filter:,} by min_data_length" if n_dropped_filter else "",
+            f" | {n_missing:,} unreadable" if n_missing else "")
+
+        if len(self._row_idx) == 0:
+            reasons = []
+            if n_dropped_short:
+                reasons.append(f"{n_dropped_short:,} records shorter than the "
+                               f"{self.input_size}s window")
+            if n_dropped_filter:
+                reasons.append(f"{n_dropped_filter:,} dropped by "
+                               f"min_data_length={min_data_length}")
+            if n_missing:
+                reasons.append(f"{n_missing:,} unreadable or missing from the length cache")
+            raise RuntimeError(
+                f"[{self.split}] no windows produced from {len(self.table):,} records"
+                + (" — " + "; ".join(reasons) if reasons else ""))
+
+    def _build_label_matrix(self):
+        """Materialise labels as a float32 (n_records, n_labels) array."""
+        if not self.has_labels:
+            self._labels = np.zeros((len(self.table), 1), dtype=np.float32)
+            return
+
+        missing = [c for c in self.label_cols if c not in self.table.columns]
+        if missing:
+            raise KeyError(
+                f"label columns absent from the joined table: {missing[:10]}"
+                f"{' ...' if len(missing) > 10 else ''} — check label_csv/label_cols "
+                f"in the task config.")
+
+        def numeric(cols):
+            frame = self.table.reindex(columns=list(cols))
+            return frame.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+
+        def binary(cols):
+            frame = self.table.reindex(columns=list(cols))
+            out = np.zeros((len(frame), len(cols)), dtype=np.float32)
+            for j, col in enumerate(cols):
+                series = frame[col]
+                if series.dtype == bool:
+                    out[:, j] = series.to_numpy(dtype=np.float32)
+                    continue
+                as_num = pd.to_numeric(series, errors="coerce")
+                text = series.astype(str).str.strip().str.lower()
+                truthy = text.isin(["true", "1", "1.0", "yes"])
+                out[:, j] = np.where(as_num.notna(), as_num.fillna(0).to_numpy(), truthy.to_numpy()).astype(np.float32)
+            return out
+
+        def binary_with_nan(cols):
+            out = binary(cols)
+            frame = self.table.reindex(columns=list(cols))
+            missing = frame.isna().to_numpy()
+            out[missing] = np.nan
+            return out
+
+        if self.task_type == "classification_and_regression":
+            cls_part = binary_with_nan(self.cls_cols)
+            reg_part = numeric(self.reg_cols)
+            if self.target_mean is not None and self.target_std is not None:
+                reg_part = (reg_part - self.target_mean) / (self.target_std + 1e-8)
+            self._labels = np.concatenate([cls_part, reg_part], axis=1)
+        elif self.task_type == "regression":
+            labels = numeric(self.label_cols)
+            if self.target_mean is not None and self.target_std is not None:
+                labels = (labels - self.target_mean) / (self.target_std + 1e-8)
+            self._labels = labels
+        elif self.task_type == "multi-label-binary":
+            self._labels = binary_with_nan(self.label_cols)
+        else:
+            self._labels = np.nan_to_num(binary(self.label_cols), nan=0.0)
+
+    # ------------------------------------------------------------------
     def __len__(self):
         return len(self._row_idx)
 
-    def __getitem__(self, idx):
-        table_idx = int(self._row_idx[idx])
-        chunk_idx = int(self._chunk_idx[idx])
-        row = self.table.iloc[table_idx]
-        seg_i = self.seg_indices[table_idx] if hasattr(self, "seg_indices") else 0
-        h5_path = self.h5_root / row["filepath"]
+    def _resolve_window(self, idx, output_size):
+        """Pick the (segment, start, end) this item reads.
 
-        # H5 from signal load
-        with h5py.File(h5_path, "r") as f:
-            fs = int(f["ECG/metadata"].attrs.get("fs", 500))
-            sig = f[f"ECG/segments/{seg_i}/signal"][()].astype(np.float32)
-            # sig: (n_leads, samples)
+        Random-crop train entries carry a sentinel start: the segment is drawn
+        with probability proportional to its number of valid offsets, then the
+        offset itself is drawn uniformly — together equivalent to the original's
+        uniform crop over one contiguous record.
+        """
+        if not self._random_crop_entries:
+            return int(self._seg_idx[idx]), int(self._start_idx[idx]), int(self._end_idx[idx])
 
-        # ── resampling + length  ──
-        # 1stage: fs  then target_fs by resampling (upsample/downsample)
-        if self.target_fs and self.target_fs != fs:
-            sig = self._resample(sig, fs, self.target_fs)
+        lo, hi = int(self._cand_offsets[idx]), int(self._cand_offsets[idx + 1])
+        segs = self._cand_segs[lo:hi]
+        lens = self._cand_lens[lo:hi]
+        if len(segs) == 1:
+            return int(segs[0]), 0, int(lens[0])
+        weights = lens - output_size + 1
+        draw = random.randrange(int(weights.sum()))
+        # side="right": draw == cumsum[i] must fall into segment i+1, otherwise
+        # the first segment would be over-sampled by one offset
+        pick = min(int(np.searchsorted(np.cumsum(weights), draw, side="right")), len(segs) - 1)
+        return int(segs[pick]), 0, int(lens[pick])
 
-        # 2stage: target_length in  crop or pad
-        if self.target_length:
-            sig = self._adjust_length(sig, self.target_length)
+    def _read_window(self, filepath, seg, start, end, output_size, fs):
+        """Read one native-rate crop and bring it to (n_leads, model_seq_len)."""
+        h5_path = self.h5_root / filepath
+        timesteps = end - start
 
-        # 3stage: chunk_length config then window slice
-        # train (random_crop=True): random offset; val/test: deterministic chunk_idx
-        if self.chunk_length is not None:
-            if self.random_crop and self._random_max_start > 0:
-                s = int(np.random.randint(0, self._random_max_start + 1))
-            else:
-                s = chunk_idx * self.chunk_length
-            e = s + self.chunk_length
-            sig = sig[:, s:e]
-
-        # normalization
-        if self.normalize and self.mean is not None and self.std is not None:
-            sig = (sig - self.mean[:, None]) / (self.std[:, None] + 1e-8)
-
-        # NaN → 0
-        sig = np.nan_to_num(sig, nan=0.0)
-
-        # label — task_type
-        if self.has_labels:
-            if self.task_type == "classification_and_regression":
-                # joint task (paper mimic_preprocessing.py): cls + reg concatenated.
-                # cls part: NaN preserved (masked BCE). reg part: NaN preserved, z-normed
-                # with train-fold stats (target_mean/target_std cover the reg part only).
-                cls_part = np.array([
-                    float(row.get(c)) if pd.notna(row.get(c)) else np.nan
-                    for c in self.cls_cols
-                ], dtype=np.float32)
-                reg_part = np.array([
-                    float(row.get(c)) if pd.notna(row.get(c)) else np.nan
-                    for c in self.reg_cols
-                ], dtype=np.float32)
-                if self.target_mean is not None and self.target_std is not None:
-                    reg_part = (reg_part - self.target_mean) / (self.target_std + 1e-8)
-                label = np.concatenate([cls_part, reg_part])
-            elif self.task_type == "regression":
-                # numeric value float32 by, NaN preserve (paper main_lite_ecg.py:122-133 mask (for))
-                label = np.array([
-                    float(row.get(c)) if pd.notna(row.get(c)) else np.nan
-                    for c in self.label_cols
-                ], dtype=np.float32)
-                # paper z-normalize: (target - train_mean) / train_std
-                if self.target_mean is not None and self.target_std is not None:
-                    label = (label - self.target_mean) / (self.target_std + 1e-8)
-            elif self.task_type == "multi-label-binary":
-                # binary 0/1, NaN preserve (paper:114-118 mask (for) — mds_ed's missing label handling)
-                vals = []
-                for c in self.label_cols:
-                    v = row.get(c)
-                    if pd.isna(v):
-                        vals.append(np.nan)
-                    else:
-                        s = str(v).lower()
-                        vals.append(1.0 if s in ("true", "1", "1.0") else 0.0)
-                label = np.array(vals, dtype=np.float32)
-            else:
-                # binary (default) — all NaN 0 as ( of-label,  negative by )
-                label = np.array([
-                    1.0 if str(row.get(c, "")).lower() in ("true", "1", "1.0") else 0.0
-                    for c in self.label_cols
-                ], dtype=np.float32)
+        # Original TimeSeriesDataset.__getitem__: random crop for train, centre
+        # crop otherwise. random.randint is inclusive, and the original excludes
+        # the very last offset — reproduced here verbatim.
+        if self.is_train:
+            start_rel = 0 if timesteps == output_size else random.randint(0, timesteps - output_size - 1)
         else:
-            label = np.zeros(1, dtype=np.float32)
+            start_rel = (timesteps - output_size) // 2
+
+        s = int(start + start_rel)
+        e = int(s + output_size)
+
+        with h5py.File(h5_path, "r") as f:
+            sig = f[f"ECG/segments/{seg}/signal"][:, s:e].astype(np.float32)
+
+        if self.lead_perm is not None:
+            sig = sig[self.lead_perm]
+
+        sig = resample_signal(sig, fs, self.fs_model)
+        sig = fit_length(sig, self.model_seq_len)
+
+        if self.normalize and self.mean is not None and self.std is not None:
+            sig = (sig - np.asarray(self.mean)[:, None]) / (np.asarray(self.std)[:, None] + 1e-8)
+
+        return np.nan_to_num(sig, nan=0.0)
+
+    def __getitem__(self, idx):
+        row = int(self._row_idx[idx])
+        output_size = int(self._output_size[idx])
+        seg, start, end = self._resolve_window(idx, output_size)
+        filepath = self.table["filepath"].iat[row]
+        h5_path = self.h5_root / filepath
+
+        skip_read = (self._skip_h5_if_cached and self._cache_path_fn is not None
+                     and self._cache_path_fn(self._pp_cache_root, str(h5_path), seg).exists())
+        if skip_read:
+            sig = np.zeros((len(self.target_leads or []) or 12, self.model_seq_len),
+                           dtype=np.float32)
+        else:
+            sig = self._read_window(filepath, seg, start, end,
+                                    output_size, float(self._fs[idx]))
 
         return {
-            "signal": torch.from_numpy(sig),          # (n_leads, chunk_length or target_length)
-            "label":  torch.from_numpy(label),         # (num_classes,)
-            "fs":     fs,
-            "idx":    idx,
-            "ecg_id": table_idx,                      # ECG-level id (eval  key)
-            "ecg_filepath": str(h5_path),             # absolute H5 path — moryecg cache key
-            "ecg_seg_idx":  int(seg_i),               # H5 segment idx — moryecg cache key
+            "signal": torch.from_numpy(np.ascontiguousarray(sig)),
+            "label": torch.from_numpy(self._labels[row].copy()),
+            "fs": float(self._fs[idx]),
+            "idx": idx,
+            "ecg_id": row,                       # record-level id -> prediction aggregation
+            "ecg_filepath": str(h5_path),        # MoRyECG preprocessing-cache key
+            "ecg_seg_idx": seg,
         }
 
-    @staticmethod
-    def _resample(sig, orig_fs, target_fs):
-        """
-        scipy based resampling (upsample/downsample).
+    # ------------------------------------------------------------------
+    def get_id_mapping(self):
+        """Record id per window — the equivalent of ``TimeSeriesDataset.get_id_mapping``."""
+        return self._row_idx
 
-        Examples:
-          200Hz → 500Hz: upsample ×2.5
-          400Hz → 500Hz: upsample ×1.25
-          1000Hz → 500Hz: downsample ×0.5
-          257Hz → 500Hz: upsample ×1.95
-        """
-        from scipy.signal import resample
-        n_leads, orig_len = sig.shape
-        target_len = int(round(orig_len * target_fs / orig_fs))
-        if target_len == orig_len:
-            return sig
-        return resample(sig, target_len, axis=1).astype(np.float32)
-
-    @staticmethod
-    def _adjust_length(sig, target_length):
-        """
-         length crop or zero-pad.
-
-        - length:  from target_length only crop
-        - :  in zero-pad
-        """
-        n_leads, cur_len = sig.shape
-        if cur_len >= target_length:
-            return sig[:, :target_length]
-        else:
-            pad = np.zeros((n_leads, target_length - cur_len), dtype=sig.dtype)
-            return np.concatenate([sig, pad], axis=1)
-
-    def compute_stats(self):
-        """per-lead mean/std compute (normalization (for))"""
-        sums = None
-        sq_sums = None
+    def compute_stats(self, max_items=5000):
+        """Per-lead mean/std over the split (only needed when normalize=True)."""
+        sums = sq_sums = None
         count = 0
-        for i in range(min(len(self), 5000)):
-            item = self[i]
-            sig = item["signal"].numpy()
+        for i in range(min(len(self), max_items)):
+            sig = self[i]["signal"].numpy()
             if sums is None:
                 sums = np.zeros(sig.shape[0], dtype=np.float64)
                 sq_sums = np.zeros(sig.shape[0], dtype=np.float64)
@@ -340,31 +615,42 @@ class H5ECGDataset(Dataset):
         return mean, std
 
 
-def build_dataloaders(cfg, split="train"):
-    """Config from DataLoader generate."""
-    from torch.utils.data import DataLoader
-
-    ds = H5ECGDataset(
+def build_dataset(cfg: dict, split: str = "train") -> H5ECGDataset:
+    """Instantiate :class:`H5ECGDataset` from a task ``data`` config section."""
+    return H5ECGDataset(
         h5_root=cfg["h5_root"],
         table_csv=cfg["table_csv"],
         label_csv=cfg.get("label_csv"),
         label_cols=cfg.get("label_cols"),
-        target_fs=cfg.get("target_fs"),
-        target_length=cfg.get("target_length"),
-        chunk_length=cfg.get("chunk_length"),
-        random_crop=(split == "train"),
-        seg_idx=cfg.get("seg_idx", None),
-        normalize=cfg.get("normalize", False),
-        fold_col=cfg.get("fold_col"),
-        fold_ids=cfg.get(f"{split}_folds"),
+        split=split,
+        input_size=cfg["input_size"],
+        fs_model=cfg["fs_model"],
+        fs_data=cfg.get("fs_data"),
+        chunkify_train=bool(cfg.get("chunkify_train", False)),
+        chunk_length_train=float(cfg.get("chunk_length_train", 1.0)),
+        stride_fraction_train=float(cfg.get("stride_fraction_train", 1.0)),
+        stride_fraction_valtest=float(cfg.get("stride_fraction_valtest", 1.0)),
+        min_data_length=cfg.get("min_data_length"),
+        seg_mode=cfg.get("seg_mode", "all"),
+        lead_order=cfg.get("lead_order", "standard"),
+        normalize=bool(cfg.get("normalize", False)),
         mean=cfg.get("mean"),
         std=cfg.get("std"),
+        fold_col=cfg.get("fold_col"),
+        fold_ids=cfg.get(f"{split}_folds"),
         task_type=cfg.get("task_type", "binary"),
         target_mean=cfg.get("target_mean"),
         target_std=cfg.get("target_std"),
         cls_cols=cfg.get("cls_cols"),
         reg_cols=cfg.get("reg_cols"),
     )
+
+
+def build_dataloaders(cfg, split="train"):
+    """Single-process DataLoader (DDP path lives in ``run.py``)."""
+    from torch.utils.data import DataLoader
+
+    ds = build_dataset(cfg, split)
     nw = int(os.environ.get("NUM_WORKERS", cfg.get("num_workers", 4)))
     loader = DataLoader(
         ds,

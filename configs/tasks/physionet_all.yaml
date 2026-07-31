@@ -8,8 +8,6 @@ data:
   table_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/ecg_table.csv
   label_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/physionet_labels.csv
   # label_cols: null → label CSV's all non-key column use (31)
-  target_fs: 500
-  target_length: 5000
   normalize: true
   batch_size: 64
   num_workers: 8

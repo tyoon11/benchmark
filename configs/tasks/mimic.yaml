@@ -21,9 +21,8 @@ data:
   normalize: false
   num_workers: 8
   table_csv: ${ECG_DATA_ROOT}/h5/mimic4/v2.0/mimic4_table.csv
-  target_fs: 500
-  target_length: 5000
 task:
   name: mimic
   num_classes: 1127   # 1092 cls + 35 reg; overwritten at runtime from schema
+  expected_num_classes: 1127   # main_lite_ecg.py
   task_type: classification_and_regression

@@ -19,8 +19,6 @@ data:
     - is_IAVB      #    797 ( 3.6%) 1st Degree AV Block
     - is_SB        #    636 ( 2.9%) Sinus Bradycardia
     - is_LBBB      #    536 ( 2.5%) Left Bundle Branch Block
-  target_fs: 500
-  target_length: 2500  # 500Hz × 5s
   normalize: false
   batch_size: 64
   num_workers: 8

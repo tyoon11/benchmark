@@ -23,6 +23,8 @@ from pathlib import Path
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
 sys.path.insert(0, str(EXTERNAL_DIR))
 
+from ._contract import ensure_length
+
 # fastai v1 compatibility shim: ecgfm_ked.py uses `from fastai.core import *`
 # which expects typing names, Enum, Floats, etc.
 if "fastai.core" not in sys.modules:
@@ -48,16 +50,20 @@ class EcgFmKEDEncoder(nn.Module):
     ECG-FM-KED (xresnet1d101) encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, T) at data target_fs → 5000 samples (10s @ 500Hz)
+      - x: (B, 12, T) from the dataset: 5000 samples (10s @ 500Hz)
         (paper's run.sh uses fs_model=500, NOT the model's pretraining 100Hz —
          xresnet1d101 is a CNN that accepts any rate)
       - pooled_features: (B, 768)
     """
 
-    # Paper run.sh: input_size=10s, fs_model=500 → 5000 samples (full ECG).
-    chunk_seconds = 10.0
+    # Encoder contract (original run.sh: --input-size 10.0 --fs-model 500).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 10.0          # seconds
     model_fs = 500
     model_seq_len = 5000
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 10.0       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -88,12 +94,11 @@ class EcgFmKEDEncoder(nn.Module):
         print(f"[EcgFmKEDEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 5000 samples (10s @ 500Hz, paper run.sh)"""
+        """x: (B, 12, T) from the dataset: 5000 samples (10s @ 500Hz, paper run.sh)"""
         from einops import rearrange
 
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
 
         # nn.Sequential forward — DataParallel safe (model same device in )
         seq = nn.Sequential.forward(self.model, x)  # (B, 768, T')

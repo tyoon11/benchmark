@@ -12,11 +12,22 @@ Encoder :
    only encoder pooled only returnthen sequence_features=None available.
    only encoder one of tensor only returnthen automatically GAP apply.
 
-Eval modes:
-  - linear_probe:         Frozen encoder + Linear head
-  - attention_probe:      Frozen encoder + Attention Pooling head
-  - finetune_linear:      Full finetune + Linear head
-  - finetune_attention:   Full finetune + Attention Pooling head
+Eval modes (left column is this repo, right column the original CLI value):
+  - linear_probe        == --eval-mode linear              (frozen encoder + Linear head)
+  - attention_probe     == --eval-mode frozen              (frozen encoder + attention pooling head)
+  - finetune_linear     == --eval-mode finetuning_linear
+  - finetune_attention  == --eval-mode finetuning_nonlinear
+
+Frozen-mode semantics
+---------------------
+The original wrappers call ``encoder.eval()`` once in ``__init__`` but never
+override ``nn.Module.train()``, so Lightning's per-epoch ``model.train()`` puts
+the "frozen" encoder back into **train mode**: dropout stays active and
+BatchNorm running statistics keep updating even though the weights are frozen.
+That materially changes linear-probe results for BatchNorm/dropout backbones
+(MERL, ECGFM-KED, HuBERT-ECG, ST-MEM), so ``paper_faithful_frozen=True``
+(the default) reproduces it. Set it to False for the arguably-more-correct
+behaviour of holding the encoder in eval mode.
 """
 
 import inspect
@@ -33,6 +44,14 @@ EVAL_MODES = [
     "finetune_attention",
 ]
 
+# this repo's eval_mode -> original --eval-mode
+ORIGINAL_EVAL_MODE = {
+    "linear_probe": "linear",
+    "attention_probe": "frozen",
+    "finetune_linear": "finetuning_linear",
+    "finetune_attention": "finetuning_nonlinear",
+}
+
 
 class DownstreamWrapper(nn.Module):
     """
@@ -45,6 +64,8 @@ class DownstreamWrapper(nn.Module):
         eval_mode:      str — one of EVAL_MODES
         seq_feature_dim: int — sequence feature dim (for attention head, None=feature_dim)
         head_kwargs:    dict — extra kwargs for head (dropout, num_heads, etc.)
+        paper_faithful_frozen: keep the frozen encoder in train mode during
+                        training, as the original does (see module docstring).
     """
 
     def __init__(
@@ -55,6 +76,7 @@ class DownstreamWrapper(nn.Module):
         eval_mode:       str = "linear_probe",
         seq_feature_dim: int = None,
         head_kwargs:     dict = None,
+        paper_faithful_frozen: bool = True,
     ):
         super().__init__()
         assert eval_mode in EVAL_MODES, f"eval_mode must be one of {EVAL_MODES}"
@@ -65,6 +87,7 @@ class DownstreamWrapper(nn.Module):
         self.num_classes = num_classes
         self.eval_mode = eval_mode
         self.is_frozen = eval_mode in ("linear_probe", "attention_probe")
+        self.paper_faithful_frozen = paper_faithful_frozen
 
         # Encoder freeze
         if self.is_frozen:
@@ -211,8 +234,14 @@ class DownstreamWrapper(nn.Module):
         ]
 
     def train(self, mode=True):
-        """Frozen mode from encoder above eval keep"""
+        """Propagate train/eval mode.
+
+        With ``paper_faithful_frozen`` the frozen encoder follows the wrapper
+        into train mode — matching the original, where nothing pins it to eval
+        (dropout active, BatchNorm running stats still updating). Otherwise it
+        is held in eval mode.
+        """
         super().train(mode)
-        if self.is_frozen:
+        if self.is_frozen and not self.paper_faithful_frozen:
             self.encoder.eval()
         return self

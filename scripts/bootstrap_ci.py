@@ -47,14 +47,28 @@ logger = logging.getLogger("bootstrap_ci")
 # Primary metric functions (sample-axis bootstrappable)
 # ──────────────────────────────────────────────────────────────────
 def macro_auroc(targets, preds):
-    """Multi-label macro AUROC. positive/negative all re- do class only ."""
+    """Multi-label macro AUROC, matching the original ``multiclass_roc_curve``.
+
+    Mean of the per-class AUCs over **all** classes, with classes that cannot be
+    scored in this bootstrap resample counted as 0.5 — the same definition the
+    trainer writes as ``auroc_macro``. Using the skip-unscoreable variant here
+    would make the CIs inconsistent with the point estimates.
+    """
+    from src.metrics import multiclass_roc_curve
+
+    _, _, roc = multiclass_roc_curve(targets, preds)
+    return float(roc["macro"])
+
+
+def macro_auroc_skipnan(targets, preds):
+    """Mean over scoreable classes only (diagnostic; see ``auroc_macro_skipnan``)."""
     n_classes = targets.shape[1]
     aucs = []
     for i in range(n_classes):
         col = targets[:, i]
+        valid = ~np.isnan(col)
         pos = np.nansum(col)
-        if 0 < pos < (~np.isnan(col)).sum():
-            valid = ~np.isnan(col)
+        if 0 < pos < valid.sum():
             try:
                 aucs.append(roc_auc_score(col[valid], preds[valid, i]))
             except ValueError:

@@ -6,8 +6,7 @@ data:
   normalize: false
   num_workers: 8
   table_csv: ${ECG_DATA_ROOT}/h5/physionet/v2.0/ptb_table.csv
-  target_fs: 500
-  target_length: 5000
 task:
   name: ptb
   num_classes: 18
+  expected_num_classes: 18   # main_lite_ecg.py

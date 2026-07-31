@@ -8,3 +8,4 @@ from .hubert_ecg import HuBERTECGEncoder
 from .cpc import CPCEncoder
 from .moryecg import MoRyECGEncoder
 from .moryecg_a5 import MoRyECGA5Encoder
+from .moryecg_a5_rvqgnn import MoRyECGA5RVQGNNEncoder

@@ -7,8 +7,7 @@ data:
   normalize: false
   num_workers: 8
   table_csv: ${ECG_DATA_ROOT}/h5/sph/v2.0/sph_table.csv
-  target_fs: 500
-  target_length: 5000
 task:
   name: sph_diag
   num_classes: 35
+  expected_num_classes: 35   # main_lite_ecg.py

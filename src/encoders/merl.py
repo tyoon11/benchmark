@@ -16,17 +16,23 @@ from pathlib import Path
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
 sys.path.insert(0, str(EXTERNAL_DIR))
 
+from ._contract import ensure_length
+
 
 class MerlResNetEncoder(nn.Module):
     """
     MERL ResNet18 encoder wrapper.
-    Input: (B, 12, T) at data target_fs → 1250 samples (2.5s @ 500Hz).
+    Input: (B, 12, T) from the dataset: 1250 samples (2.5s @ 500Hz).
     """
 
-    # Paper: input_size=2.5s, fs_model=500 → 1250 samples per window.
-    chunk_seconds = 2.5
+    # Encoder contract (original run.sh: --input-size 2.5 --fs-model 500).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 2.5          # seconds
     model_fs = 500
     model_seq_len = 1250
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 2.5       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -49,10 +55,9 @@ class MerlResNetEncoder(nn.Module):
         print(f"[MerlResNetEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 1250 samples (2.5s @ 500Hz)"""
+        """x: (B, 12, T) from the dataset: 1250 samples (2.5s @ 500Hz)"""
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
 
         out = torch.relu(self.model.bn1(self.model.conv1(x)))
         out = self.model.layer1(out)
@@ -64,5 +69,21 @@ class MerlResNetEncoder(nn.Module):
         seq = out.permute(0, 2, 1)  # (B, T', 512)
         pooled = self.model.avgpool(out).view(out.size(0), -1)  # (B, 512)
         return seq, pooled
+
+    def get_layer_groups(self):
+        """Discriminative-LR groups, matching MerlWrapper.get_params() in the original.
+
+        early (lr x factor^2): conv1, bn1, layer1, layer2
+        late  (lr x factor)  : layer3, layer4
+        Anything else (the discarded `linear` head) is left out of the optimiser,
+        exactly as the original does.
+        """
+        early, late = [], []
+        for name, param in self.model.named_parameters():
+            if name.startswith(("conv1", "bn1", "layer1", "layer2")):
+                early.append(param)
+            elif name.startswith(("layer3", "layer4")):
+                late.append(param)
+        return {"early": early, "late": late}
 
 

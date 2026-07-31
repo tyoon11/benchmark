@@ -16,21 +16,27 @@ from pathlib import Path
 EXTERNAL_DIR = Path(__file__).resolve().parent.parent / "external"
 sys.path.insert(0, str(EXTERNAL_DIR))
 
+from ._contract import ensure_length
+
 
 class ECGFounderEncoder(nn.Module):
     """
     ECG-Founder encoder wrapper.
 
     forward(x) → (sequence_features, pooled_features)
-      - x: (B, 12, T) at data target_fs — resampled to 1250 samples (2.5s @ 500Hz)
+      - x: (B, 12, T) from the dataset: 1250 samples (2.5s @ 500Hz)
       - sequence_features: (B, seq_len, 1024)
       - pooled_features:   (B, 1024)
     """
 
-    # Paper: input_size=2.5s, fs_model=500 → 1250 samples per window.
-    chunk_seconds = 2.5
+    # Encoder contract (original run.sh: --input-size 2.5 --fs-model 500).
+    # The dataset crops at the native rate and band-limit resamples to
+    # model_fs, so the tensor arriving here is already model_seq_len long.
+    input_size = 2.5          # seconds
     model_fs = 500
     model_seq_len = 1250
+    lead_order = "standard"    # I,II,III,aVR,aVL,aVF,V1..V6
+    chunk_seconds = 2.5       # deprecated alias for input_size
 
     def __init__(self, checkpoint=None):
         super().__init__()
@@ -71,10 +77,9 @@ class ECGFounderEncoder(nn.Module):
         print(f"[ECGFounderEncoder] Loaded from {path}")
 
     def forward(self, x):
-        """x: (B, 12, T) at data target_fs → 1250 samples (2.5s @ 500Hz)"""
+        """x: (B, 12, T) from the dataset: 1250 samples (2.5s @ 500Hz)"""
         x = torch.nan_to_num(x)
-        if x.shape[-1] != self.model_seq_len:
-            x = F.interpolate(x, size=self.model_seq_len, mode="linear", align_corners=False)
+        x = ensure_length(x, self.model_seq_len, type(self).__name__)
         out = self.model.first_conv(x)
         if self.model.use_bn:
             out = self.model.first_bn(out)

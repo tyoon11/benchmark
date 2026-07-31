@@ -1,34 +1,36 @@
 """
 ECG Downstream Benchmark
-=========================
-H5-backed ECG downstream task benchmark.
+========================
+H5-backed ECG downstream task benchmark, aligned with the original
+``ecg-fm-benchmarking`` (``code/main_lite.py`` + ``run.sh``).
+
+The window fed to a model is determined by the **encoder contract**, not by the
+task config: each adapter declares ``input_size`` (seconds), ``model_fs`` (Hz)
+and ``lead_order``, mirroring ``--input-size`` / ``--fs-model`` in the original
+``run.sh``. The dataset crops at the dataset's native rate, permutes leads into
+the order the encoder was pretrained on, then band-limit resamples to
+``model_fs``.
 
 Usage:
   # Single GPU
-  python run.py --task ptbxl_super_jepa --eval_mode linear_probe \
-      --encoder_cls src.encoders.ecg_jepa.ECGJEPAEncoder \
+  python run.py --task ptbxl_super --eval_mode linear_probe \
+      --encoder_cls src.encoders.ecg_founder.ECGFounderEncoder \
       --encoder_ckpt weights/encoder.pt
 
-  # Multi-GPU (e.g., 4 cards)
-  torchrun --nproc_per_node=4 run.py --task ptbxl_super_jepa \
-      --eval_mode finetune_linear \
-      --encoder_cls src.encoders.ecg_jepa.ECGJEPAEncoder \
-      --encoder_ckpt weights/encoder.pt
-
-  # select a specific GPU
-  CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 run.py ...
+  # Multi-GPU (note: DDP multiplies the effective batch size; the original ran
+  # single-GPU with batch_size=64)
+  torchrun --nproc_per_node=4 run.py --task ptbxl_super --eval_mode finetune_linear ...
 
   # dummy encoder test
-  python run.py --task ptbxl_super_jepa --eval_mode linear_probe --dummy
+  python run.py --task ptbxl_super --eval_mode linear_probe --dummy
 """
 
-import os
-import sys
 import argparse
+import importlib
 import json
 import logging
-import yaml
-import importlib
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -37,16 +39,15 @@ import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
-import numpy as np
 
 # add src to path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from src.dataset import H5ECGDataset, build_dataloaders
-from src.dataset_numpy import EchoNextDataset
-from src.wrapper import DownstreamWrapper
+from src.dataset import build_dataset
+from src.dataset_numpy import build_echonext_dataset
 from src.trainer import DownstreamTrainer
+from src.wrapper import ORIGINAL_EVAL_MODE, DownstreamWrapper
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -73,8 +74,7 @@ def setup_distributed():
     if "RANK" not in os.environ:
         return False
     dist.init_process_group(backend="nccl")
-    rank = dist.get_rank()
-    torch.cuda.set_device(rank)
+    torch.cuda.set_device(dist.get_rank())
     return True
 
 
@@ -87,7 +87,13 @@ def cleanup_distributed():
 # dummy encoder (for testing)
 # ═══════════════════════════════════════════════════════════════
 class DummyEncoder(torch.nn.Module):
-    """dummy encoder for testing. GAP → (B, feature_dim)"""
+    """Dummy encoder for smoke tests. GAP → (B, feature_dim)."""
+
+    input_size = 2.5
+    model_fs = 500
+    model_seq_len = 1250
+    lead_order = "standard"
+
     def __init__(self, n_leads=12, feature_dim=256):
         super().__init__()
         self.conv = torch.nn.Sequential(
@@ -100,9 +106,7 @@ class DummyEncoder(torch.nn.Module):
 
     def forward(self, x):
         feat = self.conv(x)
-        seq_feat = feat.transpose(1, 2)
-        pooled = feat.mean(dim=2)
-        return seq_feat, pooled
+        return feat.transpose(1, 2), feat.mean(dim=2)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -120,14 +124,12 @@ def _expand_env_vars(value):
 
 
 def load_config(task_name: str, overrides: dict = None) -> dict:
-    cfg_dir = SCRIPT_DIR / "configs"
+    import yaml
 
-    # default ECG_DATA_ROOT to a placeholder when unset.
-    # in another environment, `export ECG_DATA_ROOT=/your/data/root`  to override.
+    cfg_dir = SCRIPT_DIR / "configs"
     os.environ.setdefault("ECG_DATA_ROOT", "/path/to/ecg_data")
 
-    default_path = cfg_dir / "default.yaml"
-    with open(default_path) as f:
+    with open(cfg_dir / "default.yaml") as f:
         cfg = yaml.safe_load(f)
 
     task_path = cfg_dir / "tasks" / f"{task_name}.yaml"
@@ -148,16 +150,15 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
                 d = d.setdefault(p, {})
             d[parts[-1]] = v
 
-    # 1) ${VAR} env var expansion (e.g., ${ECG_DATA_ROOT}/h5/...).
     cfg = _expand_env_vars(cfg)
 
-    # 2) relative path resolve — inside the repo labelfile etc. ('labels/x.csv' SCRIPT_DIR reference).
+    # resolve repo-relative paths (e.g. 'labels/x.csv')
     data_section = cfg.get("data", {})
     for key in ("label_csv", "table_csv", "h5_root", "metadata_csv"):
         v = data_section.get(key)
         if isinstance(v, str) and not os.path.isabs(v):
             data_section[key] = str(SCRIPT_DIR / v)
-    if "waveforms" in data_section and isinstance(data_section["waveforms"], dict):
+    if isinstance(data_section.get("waveforms"), dict):
         for split, p in data_section["waveforms"].items():
             if isinstance(p, str) and not os.path.isabs(p):
                 data_section["waveforms"][split] = str(SCRIPT_DIR / p)
@@ -166,16 +167,10 @@ def load_config(task_name: str, overrides: dict = None) -> dict:
 
 
 def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
-    """
-    Load the encoder.
-    checkpoint adapter's __init__(checkpoint=...)  as before.
-    adapter  _load_checkpoint  then  use.
-    """
+    """Import and instantiate an encoder adapter, returning (encoder, feature_dim)."""
     module_path, cls_name = encoder_cls.rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    cls = getattr(module, cls_name)
+    cls = getattr(importlib.import_module(module_path), cls_name)
 
-    # checkpoint adapter generate in before
     if encoder_ckpt:
         kwargs["checkpoint"] = encoder_ckpt
     encoder = cls(**kwargs)
@@ -183,78 +178,46 @@ def load_encoder(encoder_cls: str, encoder_ckpt: str = None, **kwargs):
     if is_main_process() and encoder_ckpt:
         logging.info(f"Loaded encoder from {encoder_ckpt}")
 
-    feature_dim = getattr(encoder, "feature_dim", None)
+    feature_dim = getattr(encoder, "feature_dim", None) or getattr(encoder, "embed_dim", None)
     if feature_dim is None:
-        feature_dim = getattr(encoder, "embed_dim", None)
-    if feature_dim is None:
-        raise ValueError("Encoder must have 'feature_dim' or 'embed_dim' attribute")
-
+        raise ValueError("Encoder must expose a 'feature_dim' or 'embed_dim' attribute")
     return encoder, feature_dim
+
+
+def encoder_contract(encoder):
+    """Read (input_size seconds, model_fs Hz, lead_order) off an adapter.
+
+    ``chunk_seconds`` is accepted as a legacy alias for ``input_size``.
+    """
+    input_size = getattr(encoder, "input_size", None)
+    if input_size is None:
+        input_size = getattr(encoder, "chunk_seconds", None)
+    model_fs = getattr(encoder, "model_fs", None)
+    if input_size is None or model_fs is None:
+        raise ValueError(
+            f"{type(encoder).__name__} must declare 'input_size' (seconds) and "
+            f"'model_fs' (Hz) — these correspond to --input-size / --fs-model in the "
+            f"original run.sh. See src/encoders/_contract.py.")
+    return float(input_size), float(model_fs), getattr(encoder, "lead_order", "standard")
 
 
 # ═══════════════════════════════════════════════════════════════
 # DataLoader (DDP-aware)
 # ═══════════════════════════════════════════════════════════════
 def build_dataloaders_ddp(data_cfg, split="train"):
-    """
-    DDP  DataLoader generate.
-
-    loader_type:
-      - 'h5' (default): H5ECGDataset (fold based split)
-      - 'echonext_numpy': EchoNextDataset (.npy + metadata.csv, before definitionsed split use)
-    """
+    """Build the dataset for ``split`` plus a DDP-aware DataLoader."""
     from torch.utils.data import DataLoader
 
-    loader_type = data_cfg.get("loader_type", "h5")
-
-    if loader_type == "echonext_numpy":
-        # split_overrides: smoke test from train→val same mapping (for)
-        md_split = data_cfg.get("split_overrides", {}).get(split, split)
-        ds = EchoNextDataset(
-            waveform_npy=data_cfg["waveforms"][split],
-            metadata_csv=data_cfg["metadata_csv"],
-            split=md_split,
-            split_col=data_cfg.get("split_col", "split"),
-            label_cols=data_cfg["label_cols"],
-            source_fs=int(data_cfg.get("source_fs", 250)),
-            target_fs=data_cfg.get("target_fs"),
-            target_length=data_cfg.get("target_length"),
-            chunk_length=data_cfg.get("chunk_length"),
-            random_crop=(split == "train"),
-            normalize=bool(data_cfg.get("normalize", False)),
-            mean=data_cfg.get("mean"),
-            std=data_cfg.get("std"),
-            n_leads=int(data_cfg.get("n_leads", 12)),
-            layout=str(data_cfg.get("layout", "NHWC")),
-        )
+    if data_cfg.get("loader_type") == "echonext_numpy":
+        ds = build_echonext_dataset(data_cfg, split)
     else:
-        ds = H5ECGDataset(
-            h5_root=data_cfg["h5_root"],
-            table_csv=data_cfg["table_csv"],
-            label_csv=data_cfg.get("label_csv"),
-            label_cols=data_cfg.get("label_cols"),
-            target_fs=data_cfg.get("target_fs"),
-            target_length=data_cfg.get("target_length"),
-            chunk_length=data_cfg.get("chunk_length"),
-            random_crop=(split == "train"),
-            seg_idx=data_cfg.get("seg_idx", None),
-            normalize=data_cfg.get("normalize", False),
-            fold_col=data_cfg.get("fold_col"),
-            fold_ids=data_cfg.get(f"{split}_folds"),
-            mean=data_cfg.get("mean"),
-            std=data_cfg.get("std"),
-            task_type=data_cfg.get("task_type", "binary"),
-            target_mean=data_cfg.get("target_mean"),
-            target_std=data_cfg.get("target_std"),
-            cls_cols=data_cfg.get("cls_cols"),
-            reg_cols=data_cfg.get("reg_cols"),
-        )
+        ds = build_dataset(data_cfg, split)
 
     sampler = None
     shuffle = (split == "train")
     if is_distributed():
         sampler = DistributedSampler(ds, shuffle=shuffle)
-        shuffle = False  # sampler shuffle 
+        shuffle = False
 
     nw = int(os.environ.get("NUM_WORKERS", data_cfg.get("num_workers", 4)))
     loader = DataLoader(
@@ -290,30 +253,41 @@ def main():
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--save_dir", type=str, default=None)
 
+    parser.add_argument("--precision", type=str, default=None,
+                        choices=["32", "16-mixed", "bf16-mixed"],
+                        help="original default: 16-mixed (32 for the S4/CPC models)")
+    parser.add_argument("--bootstrap_iterations", type=int, default=None,
+                        help="empirical bootstrap iterations on the test split (0 disables)")
+    parser.add_argument("--export_predictions", action="store_true",
+                        help="write test predictions as .npz (original --export-predictions)")
+    parser.add_argument("--no_paper_frozen", action="store_true",
+                        help="hold frozen encoders in eval mode instead of reproducing the "
+                             "original's train-mode behaviour (BN stats / dropout)")
+
     parser.add_argument("--train_folds", type=str, default=None)
     parser.add_argument("--val_folds", type=str, default=None)
     parser.add_argument("--test_folds", type=str, default=None)
 
     args = parser.parse_args()
 
-    # DDP init
     use_ddp = setup_distributed()
     rank = get_rank()
     world_size = get_world_size()
 
-    # Logging (rank 0 only)
-    if is_main_process():
-        logging.basicConfig(level=logging.INFO,
-                            format="%(asctime)s [%(levelname)s] %(message)s")
-    else:
-        logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(
+        level=logging.INFO if is_main_process() else logging.WARNING,
+        format="%(asctime)s [%(levelname)s] %(message)s")
 
-    # Config
     overrides = {}
     if args.epochs:     overrides["train.epochs"] = args.epochs
     if args.lr:         overrides["train.lr"] = args.lr
     if args.batch_size: overrides["data.batch_size"] = args.batch_size
     if args.device:     overrides["train.device"] = args.device
+    if args.precision:  overrides["train.precision"] = args.precision
+    if args.bootstrap_iterations is not None:
+        overrides["train.bootstrap_iterations"] = args.bootstrap_iterations
+    if args.export_predictions:
+        overrides["train.export_predictions"] = True
     overrides["eval_mode"] = args.eval_mode
 
     cfg = load_config(args.task, overrides)
@@ -325,41 +299,42 @@ def main():
     num_classes = task_cfg.get("num_classes", 5)
     eval_mode = cfg.get("eval_mode", "linear_probe")
 
+    if task_cfg.get("task_type", "binary") != "classification_and_regression":
+        num_classes = _check_num_classes(task_cfg, data_cfg, num_classes)
+
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     save_dir = args.save_dir or str(
-        SCRIPT_DIR / "results" / timestamp / f"{args.task}_{eval_mode}"
-    )
+        SCRIPT_DIR / "results" / timestamp / f"{args.task}_{eval_mode}")
 
     if is_main_process():
-        logging.info(f"Task: {args.task} | Mode: {eval_mode} | Classes: {num_classes}")
+        logging.info(f"Task: {args.task} | Mode: {eval_mode} "
+                     f"(original --eval-mode {ORIGINAL_EVAL_MODE[eval_mode]}) | "
+                     f"Classes: {num_classes}")
         logging.info(f"DDP: {use_ddp} | World size: {world_size} | Rank: {rank}")
+        if use_ddp and world_size > 1:
+            logging.warning(
+                "DDP multiplies the effective batch size to %d; the original "
+                "benchmark trained single-GPU at batch_size=%d.",
+                world_size * int(data_cfg.get("batch_size", 64)),
+                int(data_cfg.get("batch_size", 64)))
 
     # ── Encoder ──
     if args.dummy:
-        encoder = DummyEncoder(n_leads=12, feature_dim=256)
-        feature_dim = 256
+        encoder, feature_dim = DummyEncoder(n_leads=12, feature_dim=256), 256
     elif args.encoder_cls:
         encoder, feature_dim = load_encoder(args.encoder_cls, args.encoder_ckpt)
     else:
         parser.error("--encoder_cls or --dummy required")
 
+    # ── Encoder contract -> data config (replaces --input-size / --fs-model) ──
+    input_size, fs_model, lead_order = encoder_contract(encoder)
+    data_cfg["input_size"] = input_size
+    data_cfg["fs_model"] = fs_model
+    data_cfg.setdefault("lead_order", lead_order)
     if is_main_process():
-        logging.info(f"Encoder feature_dim={feature_dim}")
-
-    # ── Multi-window extension (paper §3.3) ──
-    # encoder chunk_seconds then dataset ECG 1 N chunk by .
-    # → training data N + eval at ecg_id .
-    chunk_seconds = getattr(encoder, "chunk_seconds", None)
-    if chunk_seconds is not None and data_cfg.get("target_fs"):
-        chunk_length = int(round(chunk_seconds * float(data_cfg["target_fs"])))
-        if chunk_length < int(data_cfg.get("target_length", 0)):
-            data_cfg["chunk_length"] = chunk_length
-            if is_main_process():
-                logging.info(
-                    f"Multi-window enabled: chunk_seconds={chunk_seconds} "
-                    f"→ chunk_length={chunk_length} samples "
-                    f"(target_length={data_cfg['target_length']})"
-                )
+        logging.info(
+            f"Encoder: feature_dim={feature_dim} | window={input_size}s @ {fs_model}Hz "
+            f"= {int(round(input_size * fs_model))} samples | lead_order={data_cfg['lead_order']}")
 
     # ── Model Wrapper ──
     model = DownstreamWrapper(
@@ -368,31 +343,26 @@ def main():
         num_classes=num_classes,
         eval_mode=eval_mode,
         head_kwargs=head_cfg,
+        paper_faithful_frozen=not args.no_paper_frozen,
     )
 
-    # Device config
     if use_ddp:
         device = torch.device(f"cuda:{rank}")
-        model = model.to(device)
-        model = DDP(model, device_ids=[rank], find_unused_parameters=False)
-        # DDP wrapper from original module 
-        model_unwrapped = model.module
+        model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
     else:
         device = torch.device(train_cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
         model = model.to(device)
-        model_unwrapped = model
 
     if is_main_process():
         total_params = sum(p.numel() for p in model.parameters())
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         logging.info(f"Parameters: {total_params:,} total, {trainable:,} trainable")
 
-    # ── Data: Fold Split ──
+    # ── Fold split (train = fold < max-1, val = max-1, test = max) ──
     fold_cfg = cfg.get("fold", {})
     fold_col = fold_cfg.get("col", "strat_fold")
     auto_split = fold_cfg.get("auto_split", True)
 
-    # CLI override  auto_split if so, table CSV from strat_fold automatic 
     if args.train_folds:
         data_cfg["fold_col"] = fold_col
         data_cfg["train_folds"] = [int(x) for x in args.train_folds.split(",")]
@@ -404,17 +374,14 @@ def main():
         data_cfg["test_folds"] = [int(x) for x in args.test_folds.split(",")]
 
     if auto_split and not args.train_folds and not args.val_folds:
-        # table CSV → label CSV order as strat_fold search
-        # paper's split: strat_fold ∈ [0,18) train / 18 val / 19 test (18/1/1)
         table_path = data_cfg.get("table_csv", "")
         label_path = data_cfg.get("label_csv", "")
 
-        fold_source = None
-        _df_full = None
+        fold_source, _df_full = None, None
         for path in (table_path, label_path):
             if path and os.path.exists(path):
-                _df = pd.read_csv(path, usecols=lambda c: c == fold_col, nrows=1)
-                if fold_col in _df.columns:
+                probe = pd.read_csv(path, usecols=lambda c: c == fold_col, nrows=1)
+                if fold_col in probe.columns:
                     _df_full = pd.read_csv(path, usecols=[fold_col])
                     fold_source = path
                     break
@@ -430,47 +397,40 @@ def main():
                 val_n = len(_df_full[_df_full[fold_col] == max_fold - 1])
                 test_n = len(_df_full[_df_full[fold_col] == max_fold])
                 src = "table" if fold_source == table_path else "label"
-                logging.info(f"Auto fold split [{src}]: train({train_n:,}) / val({val_n:,}) / test({test_n:,})")
+                logging.info(f"Auto fold split [{src}]: train({train_n:,}) / "
+                             f"val({val_n:,}) / test({test_n:,})")
         elif is_main_process():
-            logging.warning(f"⚠ {fold_col} column table/label CSV  none — split inside  ")
+            logging.warning(f"⚠ no '{fold_col}' column in the table/label CSV — "
+                            f"splits must be given explicitly")
 
-    # task_type before (binary / multi-label-binary / regression / classification_and_regression)
     task_type = task_cfg.get("task_type", "binary")
     data_cfg["task_type"] = task_type
 
-    # ── Joint task: pull cls_cols / reg_cols / report_groups from schema JSON ──
-    # (paper main_lite_ecg.py: classification_and_regression with 158+6+1 cls + 35 reg)
+    # ── Joint task: pull cls_cols / reg_cols / report_groups from the schema JSON ──
     if task_type == "classification_and_regression":
         schema_path = data_cfg.get("schema_json")
         if not schema_path:
-            # default: replace .csv with .json next to label_csv
             label_csv = data_cfg.get("label_csv", "")
             schema_path = str(Path(label_csv).with_suffix(".json")) if label_csv else None
         if schema_path and os.path.exists(schema_path):
             with open(schema_path) as fh:
                 schema = json.load(fh)
-            if "cls_cols" not in data_cfg:
-                data_cfg["cls_cols"] = schema.get("cls_cols", [])
-            if "reg_cols" not in data_cfg:
-                data_cfg["reg_cols"] = schema.get("reg_cols", [])
-            if "report_groups" not in data_cfg:
-                data_cfg["report_groups"] = schema.get("report_groups", {})
-        cls_cols = data_cfg.get("cls_cols") or []
-        reg_cols = data_cfg.get("reg_cols") or []
-        num_cls = len(cls_cols)
-        num_reg = len(reg_cols)
-        # head output dim = cls + reg
+            data_cfg.setdefault("cls_cols", schema.get("cls_cols", []))
+            data_cfg.setdefault("reg_cols", schema.get("reg_cols", []))
+            data_cfg.setdefault("report_groups", schema.get("report_groups", {}))
+        num_cls = len(data_cfg.get("cls_cols") or [])
+        num_reg = len(data_cfg.get("reg_cols") or [])
         num_classes = num_cls + num_reg
-        task_cfg["num_cls"] = num_cls
-        task_cfg["num_reg"] = num_reg
+        task_cfg["num_cls"], task_cfg["num_reg"] = num_cls, num_reg
         if is_main_process():
-            logging.info(
-                f"  Joint MIMIC task: num_cls={num_cls}, num_reg={num_reg}, "
-                f"total head dim={num_classes}")
+            logging.info(f"  Joint MIMIC task: num_cls={num_cls}, num_reg={num_reg}, "
+                         f"total head dim={num_classes}")
+        if model_head_dim(model) != num_classes:
+            raise ValueError(
+                f"head was built with {model_head_dim(model)} outputs but the joint task "
+                f"needs {num_classes}; set task.num_classes accordingly in the task yaml.")
 
-    # ── Regression target z-normalization (paper-faithful: train fold stats) ──
-    # IMPORTANT: dataloader generate before in target_mean/std data_cfg in
-    # joint task: z-norm only the reg subset (cls part stays 0/1/NaN)
+    # ── Regression target z-normalisation from train-fold statistics ──
     znorm_cols = None
     if task_type == "regression":
         znorm_cols = data_cfg.get("label_cols")
@@ -479,33 +439,28 @@ def main():
     if znorm_cols and data_cfg.get("label_csv") and data_cfg.get("train_folds"):
         try:
             label_df_full = pd.read_csv(data_cfg["label_csv"], low_memory=False)
-            fold_col = data_cfg.get("fold_col", "strat_fold")
-            train_rows = label_df_full[label_df_full[fold_col].isin(data_cfg["train_folds"])]
+            zfold_col = data_cfg.get("fold_col", "strat_fold")
+            train_rows = label_df_full[label_df_full[zfold_col].isin(data_cfg["train_folds"])]
             if all(c in train_rows.columns for c in znorm_cols):
-                # ddof=0 to match sklearn.StandardScaler (paper mimic_preprocessing.py:431)
+                # ddof=0 to match sklearn.StandardScaler (mimic_preprocessing.py:431)
                 t_mean = train_rows[znorm_cols].mean(axis=0).values.astype("float32")
                 t_std = train_rows[znorm_cols].std(axis=0, ddof=0).values.astype("float32")
                 data_cfg["target_mean"] = t_mean.tolist()
                 data_cfg["target_std"] = t_std.tolist()
                 if is_main_process():
-                    logging.info(f"  Regression z-norm ({len(znorm_cols)} cols, train fold, ddof=0):")
-                    logging.info(f"    mean[:5]={t_mean[:5].tolist()}")
-                    logging.info(f"    std[:5]={t_std[:5].tolist()}")
+                    logging.info(f"  Regression z-norm ({len(znorm_cols)} cols, train fold, ddof=0): "
+                                 f"mean[:5]={t_mean[:5].tolist()} std[:5]={t_std[:5].tolist()}")
         except Exception as e:
             if is_main_process():
-                logging.warning(f"  z-norm compute failure (as-is rows): {e}")
+                logging.warning(f"  z-norm computation failed (using raw targets): {e}")
 
     train_ds, train_loader = build_dataloaders_ddp(data_cfg, "train")
     val_ds, val_loader = build_dataloaders_ddp(data_cfg, "val")
 
-    test_loader = None
-    has_test = (
-        data_cfg.get("test_folds")
-        or (data_cfg.get("loader_type") == "echonext_numpy"
-            and "test" in data_cfg.get("waveforms", {}))
-    )
-    if has_test:
-        _, test_loader = build_dataloaders_ddp(data_cfg, "test")
+    has_test = (data_cfg.get("test_folds")
+                or (data_cfg.get("loader_type") == "echonext_numpy"
+                    and "test" in data_cfg.get("waveforms", {})))
+    test_loader = build_dataloaders_ddp(data_cfg, "test")[1] if has_test else None
 
     if is_main_process():
         logging.info(f"Train: {len(train_ds):,} | Val: {len(val_ds):,}"
@@ -515,7 +470,7 @@ def main():
     if task_type == "classification_and_regression":
         label_names = list(data_cfg.get("cls_cols", [])) + list(data_cfg.get("reg_cols", []))
     else:
-        label_names = data_cfg.get("label_cols")
+        label_names = data_cfg.get("label_cols") or getattr(train_ds, "label_cols", None)
     trainer_cfg = {
         **train_cfg,
         "save_dir": save_dir,
@@ -534,52 +489,77 @@ def main():
     trainer = DownstreamTrainer(model, train_loader, val_loader, test_loader, trainer_cfg)
     results = trainer.train()
 
-    # ── merge CSV in append (rank 0 only) ──
     if is_main_process():
         _append_result_csv(
-            args=args,
-            task=args.task,
-            eval_mode=eval_mode,
-            encoder_cls=args.encoder_cls or "dummy",
-            num_classes=num_classes,
-            save_dir=save_dir,
-            train_size=len(train_ds),
-            val_size=len(val_ds),
+            args=args, task=args.task, eval_mode=eval_mode,
+            encoder_cls=args.encoder_cls or "dummy", num_classes=num_classes,
+            save_dir=save_dir, train_size=len(train_ds), val_size=len(val_ds),
             test_size=len(test_loader.dataset) if test_loader else 0,
-            results=results,
-            task_type=task_type,
-        )
+            results=results, task_type=task_type)
         logging.info(f"Results saved to: {save_dir}")
 
     cleanup_distributed()
     return results
 
 
-def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
-                      save_dir, train_size, val_size, test_size, results,
-                      task_type="binary"):
-    """
-    each  results results_all.csv in row by add (thread-safe append).
-    save_dir above directory(example: results/{timestamp}/) save.
+def _check_num_classes(task_cfg, data_cfg, num_classes):
+    """Cross-check the head width against the label file and the original.
 
-    task_type per metric :
-      - binary / multi-label-binary: AUROC / AUPRC / F1
-      - regression: MAE / MSE / RMSE / R² / neg_MAE
+    Three cohorts (chapman, cpsc_extra, ningbo) currently yield one label fewer
+    than the published benchmark because the H5 store holds fewer records than
+    the source datasets, which moves labels across the ``min_cnt=10`` cut. That
+    is an ingest-side gap, so it is reported rather than silently absorbed —
+    ``scripts/audit_cohorts.py`` prints the full picture.
     """
-    from pathlib import Path
-    import csv, fcntl
+    label_csv = data_cfg.get("label_csv")
+    actual = None
+    if data_cfg.get("label_cols"):
+        actual = len(data_cfg["label_cols"])
+    elif label_csv and os.path.exists(label_csv):
+        from src.dataset import NON_LABEL_COLS
+
+        header = pd.read_csv(label_csv, nrows=0)
+        actual = len([c for c in header.columns if c not in NON_LABEL_COLS])
+
+    if actual is not None and actual != num_classes:
+        if is_main_process():
+            logging.warning(
+                "task.num_classes=%d but %s provides %d label columns — using %d.",
+                num_classes, Path(label_csv).name if label_csv else "the config",
+                actual, actual)
+        num_classes = actual
+
+    expected = task_cfg.get("expected_num_classes")
+    if expected is not None and expected != num_classes and is_main_process():
+        logging.warning(
+            "⚠ label-vocabulary mismatch vs the original benchmark: this run has "
+            "%d classes, main_lite_ecg.py uses %d. Absolute numbers are NOT "
+            "directly comparable to the published table for this task "
+            "(run scripts/audit_cohorts.py for the cause).", num_classes, expected)
+    return num_classes
+
+
+def model_head_dim(model):
+    """Output dimension of the classification head (DDP-aware)."""
+    unwrapped = model.module if hasattr(model, "module") else model
+    return unwrapped.num_classes
+
+
+def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
+                       save_dir, train_size, val_size, test_size, results,
+                       task_type="binary"):
+    """Append one row per run to ``results_all.csv`` next to the run directory."""
+    import csv
+    import fcntl
 
     save_path = Path(save_dir)
-    parent = save_path.parent
-    csv_path = parent / "results_all.csv"
+    csv_path = save_path.parent / "results_all.csv"
 
-    # model name (encoder_cls →  class)
     model_name = encoder_cls.rsplit(".", 1)[-1] if "." in encoder_cls else encoder_cls
     model_name = model_name.replace("Encoder", "").lower()
 
-    # test_metrics.txt read
     test_m = _read_metrics(save_path / "test_metrics.txt")
-    val_m = _read_metrics(save_path / "val_metrics.txt")
+    val_m = _read_metrics(save_path / "val_best_metrics.txt") or _read_metrics(save_path / "val_metrics.txt")
 
     row = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -591,35 +571,40 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
         "train_size": train_size,
         "val_size": val_size,
         "test_size": test_size,
-        "best_val": results.get("best_val", results.get("best_val_auroc", float("nan"))),
+        "best_val": results.get("best_val", float("nan")),
         "best_epoch": results.get("best_epoch", -1),
-        # Classification metrics (binary / multi-label-binary)
+        # Classification (paper macro definition: mean per-class AUC, 0.5 for unscoreable)
         "test_auroc_macro": test_m.get("auroc_macro", float("nan")),
+        "test_auroc_macro_low": test_m.get("auroc_macro_low", float("nan")),
+        "test_auroc_macro_high": test_m.get("auroc_macro_high", float("nan")),
+        "test_auroc_macro_skipnan": test_m.get("auroc_macro_skipnan", float("nan")),
+        "test_auroc_macro_noagg": test_m.get("noagg_auroc_macro", float("nan")),
         "test_auroc_micro": test_m.get("auroc_micro", float("nan")),
         "test_auprc_macro": test_m.get("auprc_macro", float("nan")),
-        "test_f1_macro":    test_m.get("f1_macro", float("nan")),
+        "test_f1_macro": test_m.get("f1_macro", float("nan")),
         "val_auroc_macro": val_m.get("auroc_macro", float("nan")),
-        # Regression metrics
-        "test_mae_macro":   test_m.get("mae_macro", float("nan")),
-        "test_mse_macro":   test_m.get("mse_macro", float("nan")),
-        "test_rmse_macro":  test_m.get("rmse_macro", float("nan")),
-        "test_r2_macro":    test_m.get("r2_macro", float("nan")),
+        # Regression
+        "test_mae_macro": test_m.get("mae_macro", float("nan")),
+        "test_mae_global": test_m.get("mae_global", float("nan")),
+        "test_mse_macro": test_m.get("mse_macro", float("nan")),
+        "test_rmse_macro": test_m.get("rmse_macro", float("nan")),
+        "test_r2_macro": test_m.get("r2_macro", float("nan")),
         "val_neg_mae_macro": val_m.get("neg_mae_macro", float("nan")),
-        # Joint task (classification_and_regression) — paper composite score
+        # Joint task
         "test_composite_score": test_m.get("composite_score", float("nan")),
         "test_auroc_macro_cls": test_m.get("auroc_macro_cls", float("nan")),
-        "test_mae_global_reg":  test_m.get("mae_global_reg", float("nan")),
+        "test_mae_global_reg": test_m.get("mae_global_reg", float("nan")),
+        "n_windows": test_m.get("n_windows", float("nan")),
+        "n_records": test_m.get("n_records", float("nan")),
         "save_dir": str(save_dir),
     }
-    # per-sub-task metrics for joint tasks — derived dynamically from test_metrics.txt
     if task_type == "classification_and_regression":
         for key, val in test_m.items():
-            if key.endswith("_auroc_macro") and key != "auroc_macro" and key != "auroc_macro_cls":
+            if key.endswith("_auroc_macro") and key not in ("auroc_macro", "auroc_macro_cls"):
                 row[f"test_{key}"] = val
             elif key.endswith("_mae_macro") or key.endswith("_mae_global"):
                 row[f"test_{key}"] = val
 
-    # file lock + append (  concurrent run )
     new_file = not csv_path.exists()
     with open(csv_path, "a", newline="") as f:
         try:
@@ -634,8 +619,7 @@ def _append_result_csv(args, task, eval_mode, encoder_cls, num_classes,
 
 
 def _read_metrics(path):
-    """metrics txt file from key: value parsing"""
-    from pathlib import Path
+    """Parse a ``key: value`` metrics text file into a float dict."""
     if not Path(path).exists():
         return {}
     result = {}
