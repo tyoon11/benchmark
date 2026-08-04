@@ -35,8 +35,17 @@ FORCE=${FORCE:-0}
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 cd "$SCRIPT_DIR"
 
-# CPC(S4/pykeops)  do GLIBCXX  — preload (run_full_benchmark.sh and identical)
-export LD_PRELOAD=/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6
+# Ship a newer libstdc++ to the JIT-compiled nvrtc_jit.so that CPC's S4/pykeops
+# builds. Resolve it from the active env; a missing LD_PRELOAD path makes the
+# loader warn on every process (same handling as run_full_benchmark.sh).
+_LIBSTDCXX="$(dirname "$(dirname "$(command -v python)")")/lib/libstdc++.so.6"
+if [ -f "$_LIBSTDCXX" ]; then
+    export LD_PRELOAD="$_LIBSTDCXX"
+else
+    echo "[warn] libstdc++.so.6 not found next to $(command -v python)" >&2
+fi
+export MORYECG_REPO=${MORYECG_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}
+export MORYECG_CACHE=${MORYECG_CACHE:-$MORYECG_REPO/cache_v4}
 export ECG_DATA_ROOT=${ECG_DATA_ROOT:-/home/irteam/ddn-opendata1}
 export ECG_CKPT_ROOT=${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}
 

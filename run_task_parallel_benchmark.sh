@@ -42,10 +42,13 @@ export MORYECG_REPO=${MORYECG_REPO:-/home/irteam/local-node-d/tykim/MoryECG}
 export MORYECG_CACHE=${MORYECG_CACHE:-/home/irteam/local-node-d/tykim/MoryECG/cache_v4}
 export ECG_DATA_ROOT=${ECG_DATA_ROOT:-/home/irteam/ddn-opendata1}
 export ECG_CKPT_ROOT=${ECG_CKPT_ROOT:-/home/irteam/ddn-opendata1/model/ECGFMs}
-export LD_PRELOAD=${LD_PRELOAD:-/home/irteam/local-node-d/_conda/envs/tykim/lib/libstdc++.so.6}
+# Resolve libstdc++ from the env we actually run in; a missing LD_PRELOAD path
+# makes the loader warn on every process. Needed for CPC's S4/pykeops JIT.
+CONDA_BIN=${CONDA_BIN:-/home/irteam/local-node-d/_conda/envs/hbkim/bin}
+_LIBSTDCXX="$(dirname "$CONDA_BIN")/lib/libstdc++.so.6"
+[ -f "$_LIBSTDCXX" ] && export LD_PRELOAD=${LD_PRELOAD:-$_LIBSTDCXX}
 export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
 
-CONDA_BIN=${CONDA_BIN:-/home/irteam/local-node-d/_conda/envs/tykim/bin}
 if [ -z "${PYTHON_BIN:-}" ] && [ -x "$CONDA_BIN/python" ]; then
     PYTHON_BIN="$CONDA_BIN/python"
 else
@@ -301,11 +304,16 @@ run_one() {
         echo "======================================================================"
     } > "$run_log"
 
+    local precision_arg=()
+    case "$model" in
+        cpc|s4) precision_arg=(--precision 32) ;;
+    esac
+
     CUDA_VISIBLE_DEVICES="$gpu" "$PYTHON_BIN" run.py \
         --task "$task" --eval_mode "$mode" \
         --encoder_cls "$encoder_cls" \
         --encoder_ckpt "$encoder_ckpt" \
-        --epochs "$epochs" "${lr_arg[@]}" \
+        --epochs "$epochs" "${lr_arg[@]}" "${precision_arg[@]}" \
         --save_dir "$save_dir" \
         2>&1 | tee -a "$run_log" >> "$BENCHMARK_LOG"
     rc=$?
